@@ -1,0 +1,100 @@
+.rich-compact-editor{gap:12px}
+.rich-compact-heading{display:flex;align-items:end;flex-wrap:wrap;gap:12px 16px;padding:12px 0;border-bottom:1px solid var(--border)}
+.rich-compact-heading>label{display:grid;gap:5px;font-size:14px;font-weight:700;min-width:130px}
+.rich-compact-heading>label:nth-child(2){flex:1 1 220px}
+.rich-compact-heading>label>span{display:flex;align-items:center;min-height:44px;font-weight:500}
+.rich-compact-heading input,.rich-compact-heading textarea,.rich-compact-heading select{box-sizing:border-box;min-height:44px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:inherit}
+.rich-compact-heading>details{flex:1 1 100%}
+.rich-compact-heading>details>summary,.rich-compact-details>summary,.rich-compact-group-row summary{cursor:pointer;color:var(--text-muted);font-size:13px;font-weight:700}
+.rich-compact-heading>details .rich-field-grid{margin-top:12px;max-width:680px}
+.rich-compact-scroll{max-width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.rich-compact-scroll table{width:100%;min-width:760px;border-collapse:collapse;table-layout:fixed;background:var(--surface)}
+.rich-compact-scroll th,.rich-compact-scroll td{border-bottom:1px solid var(--border);border-right:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.rich-compact-scroll thead th:last-child,.rich-compact-scroll .rich-compact-note-cell{border-right:0}
+.rich-compact-scroll thead th{font-size:14px;font-weight:700;background:var(--surface-subtle)}
+.rich-compact-scroll thead th small{display:block;font-size:11px;font-weight:500;color:var(--text-muted)}
+.rich-compact-scroll thead th:nth-child(1){width:23%}
+.rich-compact-scroll thead th:nth-child(2){width:5%;text-align:center}
+.rich-compact-scroll thead th:nth-child(3){width:8%}
+.rich-compact-scroll thead th:nth-child(4){width:24%}
+.rich-compact-scroll thead th:nth-child(5){width:8%}
+.rich-compact-scroll thead th:nth-child(6){width:32%}
+.rich-compact-exercise-start>td{border-top:2px solid var(--border)}
+.rich-compact-exercise-cell{position:relative;background:var(--surface-subtle);min-width:0}
+.rich-compact-exercise-name{display:flex;align-items:center;gap:5px;min-width:0;padding-right:32px}
+.rich-compact-exercise-name input{min-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;font-size:16px;font-weight:700}
+.rich-compact-exercise-controls{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:5px 0}
+.rich-compact-track{border:0;background:none;color:var(--text-muted);font-size:12px;font-weight:700;cursor:pointer;padding:5px 0}
+.rich-compact-track.is-tracked{color:var(--green)}
+.rich-compact-stepper{display:inline-flex;align-items:center;margin-left:auto;border:1px solid var(--border);border-radius:6px;overflow:hidden;white-space:nowrap}
+.rich-compact-stepper button{min-width:28px;min-height:28px;padding:0;border:0;background:var(--surface);color:var(--text);font-size:16px;cursor:pointer}
+.rich-compact-stepper button:disabled{color:var(--text-muted);cursor:default}
+.rich-compact-stepper span{padding:0 6px;border-inline:1px solid var(--border);font:11px var(--font-mono,monospace);color:var(--text-muted)}
+.rich-compact-details{margin-top:6px}
+.rich-compact-details>summary{position:absolute;top:8px;right:8px;display:grid;place-items:center;width:28px;height:28px;border-radius:6px;font-size:22px;line-height:1;list-style:none}
+.rich-compact-details>summary::-webkit-details-marker{display:none}
+.rich-compact-details>summary:hover{background:var(--surface);color:var(--text)}
+.rich-compact-details[open]{position:relative;z-index:1;width:min(430px,75vw);padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.rich-compact-details .rich-field-grid,.rich-compact-details .rich-tracking-fields,.rich-compact-details .rich-set,.rich-compact-details .rich-row-actions{margin-top:10px}
+.rich-compact-scroll td>input,.rich-compact-load input,.rich-compact-load select,.rich-compact-exercise-name input,.rich-compact-note-cell textarea{box-sizing:border-box;width:100%;min-height:36px;padding:5px 6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font:inherit}
+.rich-compact-scroll tbody td{vertical-align:middle}
+.rich-compact-scroll .rich-compact-exercise-cell,.rich-compact-scroll .rich-compact-note-cell{vertical-align:top}
+.rich-compact-exercise-name input{font-size:16px;font-weight:700}
+.rich-compact-scroll td>input:hover,.rich-compact-load input:hover,.rich-compact-load select:hover,.rich-compact-exercise-name input:hover,.rich-compact-note-cell textarea:hover{border-color:var(--border)}
+.rich-compact-set-number{text-align:center!important;color:var(--text-muted);font:12px var(--font-mono,monospace)}
+.rich-compact-load{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;min-width:0}
+.rich-compact-load input{flex:0 1 72px;min-width:72px;font-variant-numeric:tabular-nums}
+.rich-compact-load .rich-compact-load-type{flex:0 0 92px;width:92px}
+.rich-compact-load .rich-compact-effort{flex:0 0 120px;width:120px}
+.rich-compact-load-placeholder{display:inline-block;min-width:72px;color:var(--text-muted)}
+.rich-compact-load small{flex:0 0 100%;font-size:11px;color:var(--text-muted)}
+.rich-compact-load span{color:var(--text-muted);font-size:13px}
+.rich-compact-note-cell{position:relative;padding:0!important}
+.rich-compact-note-cell textarea{position:absolute;inset:0;display:block;height:100%;padding:12px;resize:none}
+.rich-compact-note-cell:has(small) textarea{height:calc(100% - 23px)}
+.rich-compact-note-cell small{position:absolute;bottom:0;left:0;right:0;display:block;padding:0 12px 8px;color:var(--text-muted);font-size:11px;background:var(--surface)}
+.rich-compact-group-row th{background:var(--surface-subtle);padding:10px 12px}
+.rich-compact-group-row details[open] .rich-field-grid{max-width:600px;margin:12px 0}
+.rich-compact-actions{display:flex;flex-wrap:wrap;gap:8px}
+.rich-compact-rest{padding:28px;border:1px dashed var(--border);border-radius:8px;text-align:center;color:var(--text-muted)}
+.rich-compact-editor input:focus-visible,.rich-compact-editor select:focus-visible,.rich-compact-editor textarea:focus-visible,.rich-compact-editor button:focus-visible,.rich-compact-editor summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+@media(max-width:760px){.rich-compact-editor .rich-compact-stepper button,.rich-compact-track,.rich-compact-scroll td>input,.rich-compact-load input,.rich-compact-load select,.rich-compact-exercise-name input{min-height:44px}.rich-compact-details>summary{width:44px;height:44px}.rich-compact-exercise-name{padding-right:46px}.rich-compact-scroll table{min-width:760px}.rich-compact-heading>label{font-size:14px}}
+
+/* Exercise-section worksheet: shared by assignments and both template editors. */
+.rich-compact-scroll{border-radius:6px;border-color:var(--border-strong)}
+.rich-compact-scroll table{min-width:720px}
+.rich-compact-scroll th,.rich-compact-scroll td{border-right:1px solid var(--border)}
+.rich-compact-scroll .rich-compact-note-cell{border-right:0}
+.rich-compact-scroll tbody td{height:28px;padding:0;vertical-align:middle}
+.rich-compact-scroll .rich-compact-column-head th{height:24px;padding:0 10px;background:var(--surface-subtle);font-size:12px;vertical-align:middle;white-space:nowrap;border-bottom-color:var(--border-strong)}
+.rich-compact-column-head th small{display:inline;margin-left:4px;font-size:10px;font-weight:500;color:var(--text-muted)}
+.rich-compact-column-head th:first-child{text-align:center}
+.rich-compact-column-head th:last-child{border-right:0}
+.rich-compact-scroll .rich-compact-exercise-cell{padding:0 12px;border-right:0;border-top:1px solid var(--border-strong);border-bottom:1px solid var(--border-strong)}
+.rich-compact-exercise-header{position:relative;display:flex;align-items:center;flex-wrap:wrap;gap:12px;min-height:36px;padding:3px 32px 3px 0}
+.rich-compact-exercise-name{padding:0;flex:0 1 240px;min-width:120px}
+.rich-compact-exercise-name input{height:28px;min-height:28px!important;padding:0;font-size:16px;border-radius:0}
+.rich-compact-exercise-controls{margin:0;gap:12px;flex-wrap:nowrap}
+.rich-compact-track{padding:0;min-height:24px;font:10px var(--font-mono,monospace)}
+.rich-compact-stepper{margin-left:0;border-radius:4px;height:24px}
+.rich-compact-stepper button{min-height:22px;min-width:24px;line-height:22px}
+.rich-compact-stepper span{font-size:10px}
+.rich-compact-exercise-header>.rich-compact-details{margin:0}
+.rich-compact-details>summary{top:6px;right:0;width:24px;height:24px}
+.rich-compact-details[open]{position:relative;flex:0 0 100%;width:100%;margin:8px 0;padding:12px;max-width:none}
+.rich-compact-details[open]>summary{top:0;right:0}
+.rich-compact-scroll tbody td>input,.rich-compact-scroll .rich-compact-load-value input,.rich-compact-scroll .rich-compact-load-value select,.rich-compact-scroll .rich-compact-load-type-cell select{height:27px;min-height:0;width:100%;padding:0 10px;border:0;border-radius:0;background:transparent;font:12px var(--font-mono,monospace);font-variant-numeric:tabular-nums}
+.rich-compact-scroll .rich-compact-load-type-cell select{padding:0 4px 0 8px;font-size:11px}
+.rich-compact-load-value{min-width:0}
+.rich-compact-load-type-cell{position:relative}
+.rich-compact-load-type-cell:has(.rich-compact-percent-hint) select{width:calc(100% - 18px)}
+.rich-compact-percent-hint{position:absolute;right:5px;top:7px;font-size:11px;color:var(--text-muted);cursor:help}
+.rich-compact-scroll input[type=number]{appearance:textfield;-moz-appearance:textfield}
+.rich-compact-scroll input[type=number]::-webkit-inner-spin-button,.rich-compact-scroll input[type=number]::-webkit-outer-spin-button{appearance:none;margin:0}
+.rich-compact-scroll td:focus-within{background:var(--gold-soft);outline:2px solid var(--focus);outline-offset:-2px}
+.rich-compact-scroll td>input:focus-visible,.rich-compact-scroll .rich-compact-load-value input:focus-visible,.rich-compact-scroll .rich-compact-load-type-cell select:focus-visible,.rich-compact-note-cell textarea:focus-visible{outline:none}
+.rich-compact-exercise-start>td{border-top:0}
+.rich-compact-note-cell textarea{padding:8px 12px;border:0;border-radius:0;min-height:0;font-size:14px;line-height:1.4}
+.rich-compact-note-cell small{padding:0 12px 5px;font-size:10px}
+.rich-compact-scroll .rich-compact-group-row th{padding:8px 12px}
+@media(max-width:760px){.rich-compact-scroll tbody td{height:44px}.rich-compact-scroll tbody td>input,.rich-compact-scroll .rich-compact-load-value input,.rich-compact-scroll .rich-compact-load-value select,.rich-compact-scroll .rich-compact-load-type-cell select{height:43px;min-height:43px}.rich-compact-exercise-header{min-height:44px}.rich-compact-exercise-controls{gap:8px}.rich-compact-stepper{height:44px}.rich-compact-stepper button{height:42px;min-height:42px;min-width:44px}.rich-compact-track{min-height:44px}.rich-compact-details>summary{width:44px;height:44px;top:0}.rich-compact-exercise-header{padding-right:44px}.rich-compact-exercise-name{flex-basis:200px}}

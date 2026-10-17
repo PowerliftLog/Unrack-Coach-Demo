@@ -1,0 +1,42 @@
+.approved-live{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh;background:var(--canvas)}
+.approved-live :is(button,input,select,textarea,h1,h2,h3){font-family:inherit}.approved-live :is(h1,h2,h3){font-weight:500;letter-spacing:-.35px}.approved-live button{font-weight:500}.approved-client-rail{padding:24px 16px;border-right:1px solid var(--border);position:sticky;top:0;height:100vh;overflow:auto}.approved-client-rail .brand{margin-bottom:28px;color:var(--text)}.approved-client-rail input{width:100%;margin:16px 0}.approved-client-rail nav{display:grid;gap:6px}.approved-client-rail nav button{text-align:left;padding:12px;border:1px solid transparent;background:transparent;border-radius:6px}.approved-client-rail nav button[aria-current]{border-color:var(--gold);background:var(--surface)}.approved-client-main{min-width:0}.approved-main-tabs{display:flex;gap:28px;padding:24px 28px 0;border-bottom:1px solid var(--border)}.approved-main-tabs button{padding:0 0 16px;background:transparent;border:0;border-bottom:3px solid transparent;font-size:16px}.approved-main-tabs button[aria-selected=true]{border-color:var(--gold)}.approved-live .phase4-app{display:block;min-height:0}.approved-live .phase4-app>.connected-roster{display:none}.approved-live .connected-main{max-width:none;padding:28px}.approved-live .connected-header h1{font-size:27px}.approved-live .builder-toolbar{justify-content:flex-end}.approved-live .builder-toolbar>.save-state{margin-right:auto}.approved-program-nav{display:flex;justify-content:space-between;align-items:center;margin:22px 0 16px;gap:16px}.approved-program-nav>div{display:flex;align-items:center;gap:8px}.approved-program-nav select{min-width:100px}.approved-day-strip{display:grid;grid-template-columns:auto repeat(7,minmax(65px,1fr)) auto;gap:6px;margin-bottom:20px}.approved-day-strip button{min-height:44px;border:1px solid var(--border);border-radius:5px;background:var(--surface);padding:8px;display:flex;gap:8px;justify-content:center;align-items:center}.approved-day-strip button[aria-selected=true]{border-color:var(--gold);box-shadow:inset 0 -2px var(--gold)}.approved-day-strip time,.approved-week-band time{font:11px ui-monospace,SFMono-Regular,monospace}.approved-week-bands{padding-bottom:38vh}.approved-week-band{border:1px solid var(--border);border-radius:8px;margin:16px 0;background:var(--surface);scroll-margin:80px}.approved-week-band header{padding:16px 20px;display:flex;justify-content:space-between;border-bottom:1px solid var(--border)}.approved-week-band h3{margin:0}.approved-week-band>div{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.approved-week-band>div>button{text-align:left;padding:14px;min-height:148px;display:flex;flex-direction:column;gap:12px;border:0;border-right:1px solid var(--border);background:transparent}.approved-week-band>div>button:last-child{border-right:0}.approved-week-band small{font-size:12px;color:var(--text-muted)}.approved-week-band.selected{border-color:var(--gold)}.approved-day-heading{display:flex;justify-content:space-between;align-items:center;margin:16px 0}.approved-live .rich-day-editor{max-width:none}.approved-live .phase4-actions{gap:8px}.approved-live .connected-theme-control{position:fixed}.approved-tools{margin-bottom:12px}.approved-tools>summary{cursor:pointer;color:var(--text-muted);font-size:13px}.approved-tools .builder-toolbar{margin-top:10px}.approved-live .hub-main{padding:28px}.approved-live .client-hub{display:block;min-height:0}
+
+.approved-home{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}.approved-home :is(h1,h2,h3,button,input,select,textarea,strong){font-family:inherit;font-weight:500}.approved-home h1{font-size:27px}.approved-home h2{font-size:21px}.approved-home .brand{font-family:"Barlow Condensed",sans-serif;font-weight:800}
+
+.approved-week-band .approved-calendar-slot{min-width:0;border-right:1px solid var(--border);display:flex;flex-direction:column}
+.approved-week-band .approved-calendar-slot:last-child{border-right:0}
+.approved-week-band .approved-calendar-slot>button:first-child{text-align:left;padding:14px;min-height:148px;display:flex;flex-direction:column;gap:12px;border:0;background:transparent;color:var(--text);flex:1}
+.approved-week-band .approved-calendar-slot>.approved-calendar-template{margin:0 14px 12px;text-align:left;min-height:38px;border:0;background:transparent;color:var(--text-muted);padding:4px 0;font-size:12px}
+
+/* A square accent is independent of the control's rounded surface. */
+:is(.approved-live,.approved-home) button:is([aria-selected="true"],[aria-pressed="true"],[aria-current="page"]){position:relative;box-shadow:none;border-bottom-color:var(--border)}
+:is(.approved-live,.approved-home) button:is([aria-selected="true"],[aria-pressed="true"],[aria-current="page"])::after{content:"";position:absolute;pointer-events:none;left:0;right:0;bottom:0;height:2px;background:var(--gold);border-radius:0}
+.approved-main-tabs button[aria-selected="true"]{border-bottom-color:transparent}
+
+.approved-authoring-grid{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:20px;align-items:start}.approved-authoring-grid .phase4-focused-day{margin:0}.approved-inspector{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;font-size:13px}.approved-inspector h2{font-size:21px}.approved-inspector dl>div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}.approved-inspector dd{margin:0}.approved-inspector>button{width:100%;margin-top:16px}.approved-inspector>p:last-child{color:var(--text-muted);line-height:1.5}
+
+/* The legacy builder declares its own condensed font; keep the approved C typography throughout this workspace. */
+.approved-live .phase4-app{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.approved-live .phase4-app :is(button,input,select,textarea,h1,h2,h3){font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.approved-live .phase4-app :is(button,h1,h2,h3){font-weight:500}
+
+/* Accessible control text inherits the theme rather than browser-default black. */
+.approved-live :is(.approved-client-rail nav button,.approved-main-tabs button,.approved-day-strip button){color:var(--text)}
+.approved-live .builder-toolbar>.save-state{color:var(--text-muted)}
+.approved-day-tabs{display:contents}
+:is(.approved-live,.approved-home) .brand small,.approved-home .phase55-avatar{color:var(--action-border)}
+.approved-home .phase8-status.programmed{color:var(--green-text)}
+
+/* Share the arrow columns so the Day scope aligns with Monday below. */
+.approved-live .connected-main{--week-arrow-width:112px;--week-column-gap:6px}
+.approved-program-nav{display:grid;grid-template-columns:var(--week-arrow-width) repeat(7,minmax(65px,1fr)) var(--week-arrow-width);gap:var(--week-column-gap)}
+.approved-program-nav>.program-views{grid-column:2 / 5;display:grid;grid-template-columns:subgrid;gap:var(--week-column-gap);margin:0}
+.approved-program-nav>.program-views>button:last-child{grid-column:span 2}
+.approved-program-nav>div:last-child{grid-column:5 / -1;justify-content:flex-end;gap:8px}
+.approved-program-nav :is(.button,select){height:44px;min-height:44px;margin:0}
+.approved-program-nav>div:last-child>label{display:flex;align-items:center;gap:8px;margin:0}
+.approved-program-nav select{padding:8px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text)}
+.approved-day-strip{grid-template-columns:var(--week-arrow-width) repeat(7,minmax(65px,1fr)) var(--week-arrow-width);gap:var(--week-column-gap)}
+.approved-live .builder-toolbar{margin-inline:0;padding-inline:0}
+.approved-home .phase8-status:not(.programmed){color:var(--action-border)}
+@media(max-width:1100px){.approved-program-nav{display:flex;flex-wrap:wrap;padding-left:calc(var(--week-arrow-width) + var(--week-column-gap))}.approved-program-nav>.program-views{display:flex}.approved-program-nav>div:last-child{margin-left:auto}}
