@@ -472,3 +472,23 @@ button:focus-visible, input:focus-visible, [role='tab']:focus-visible {
 .owner-welcome { padding: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .owner-welcome h2 { margin-top: 0; }
 .owner-welcome .dialog-actions { justify-content: flex-start; flex-wrap: wrap; }
+
+/* Keep the athlete workspace header and tabs at a stable viewport anchor. */
+.athlete-workspace-backdrop{align-items:flex-start;padding-top:16px}
+.athlete-workspace{display:flex;flex-direction:column;gap:14px;overflow:hidden;min-height:0}
+.athlete-workspace>.close{flex-shrink:0}
+.athlete-workspace>.eyebrow,.athlete-workspace>h2,.athlete-workspace>.athlete-profile-tabs{flex-shrink:0;margin-block:0}
+.athlete-workspace>[role=tabpanel]{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:4px}
+.athlete-profile-fields .athlete-tested-maxes{grid-template-columns:minmax(0,1fr)}
+.athlete-tested-max-row{display:grid;grid-template-columns:minmax(0,1fr) 68px;align-items:end;gap:8px}
+.athlete-tested-max-row>label{margin:0}
+.athlete-tested-max-unit select{padding-inline:8px}
+.athlete-tested-max-unit>span{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.athlete-track-add>label{margin:0}
+.athlete-track-add>.button{height:44px;min-height:44px;margin:0}
+.phase4-workspace-name{display:grid;gap:6px;margin:12px 0}
+.phase4-workspace-name>span{font:10px 'IBM Plex Mono',monospace;color:var(--text-muted)}
+.phase4-workspace-name>strong{color:var(--text);font-size:14px;font-weight:500;overflow-wrap:anywhere}
+.empty-calendar-workspace>p,.empty-calendar-workspace>.button{margin-left:42px;margin-right:42px}
+@media(max-width:760px){.empty-calendar-workspace>p,.empty-calendar-workspace>.button{margin-left:16px;margin-right:16px}}
+@media(max-width:600px){.athlete-workspace-backdrop{padding-top:10px}.athlete-workspace{max-height:calc(100dvh - 20px)}}
