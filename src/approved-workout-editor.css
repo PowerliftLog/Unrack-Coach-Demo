@@ -46,15 +46,17 @@
 .aw-assigned-load{display:flex;flex-direction:column;align-items:center;gap:2px;padding:5px 4px;font:11px/1.3 'IBM Plex Mono',monospace}
 .aw-assigned-load strong{font-weight:500}.aw-assigned-load small{font-size:9px;color:var(--text-muted)}
 
-/* Exercise-level totals sit beside the name; the Set column only identifies rows. */
-.aw-exercise-name{height:auto;min-height:64px;align-items:stretch}
-.aw-exercise-entry{display:flex;flex:1;flex-direction:column;min-width:0}
-.aw-exercise-entry>input{width:100%;height:32px;border:0;border-radius:0;padding:6px 8px;font:500 13px var(--aw-sans);background:transparent}
-.aw-exercise-tools{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-height:30px;padding:0 6px 4px}
-.aw-exercise-tools label{display:flex;align-items:center;gap:4px;color:var(--text-muted);font:10px var(--aw-sans)}
-.aw-exercise-tools label select{height:24px;min-height:24px;padding:2px 4px;font:11px 'IBM Plex Mono',monospace}
+/* Expanded sets keep their total in a separate control row. */
+.aw-exercise-name{height:32px;min-height:32px;align-items:center}
+.aw-exercise-entry{display:flex;flex:1;align-items:center;min-width:0}
+.aw-exercise-entry>input{min-width:0;flex:1;width:100%;height:32px;border:0;border-radius:0;padding:6px 8px;font:500 13px var(--aw-sans);background:transparent}
+.aw-exercise-tools{display:flex;align-items:center;gap:4px;padding:0 4px;white-space:nowrap}
 .aw-exercise-tools>button{min-height:24px;padding:3px 5px;border:0;background:transparent;font:10px var(--aw-sans);color:var(--text-muted)}
 .aw-exercise-tools>button:disabled{border:0;background:transparent}
 .aw-exercise-tools>.aw-note{color:var(--action-border);text-decoration:underline;text-underline-offset:2px}
-.aw-workout-actions>button:first-child{background:transparent;border:0;color:var(--text-muted);padding-left:0}
-.aw-detail-scope{padding:8px;background:var(--surface-subtle);border:1px solid var(--border);margin-bottom:0}
+.aw-count-control{display:block}
+.aw-count-control label{display:block;font-size:0}
+.aw-sheet .aw-count-control select{width:100%;height:32px;min-height:32px;border:0;border-radius:0;background:transparent;padding:2px 4px;font:11px 'IBM Plex Mono',monospace}
+.aw-sheet .aw-count-range{width:100%;min-height:32px;padding:2px;border:0;background:transparent;font:10px 'IBM Plex Mono',monospace}
+.aw-count-caption{padding-left:8px;color:var(--text-muted);font:10px var(--aw-sans)}
+@media(max-width:760px){.aw-exercise-name,.aw-exercise-entry>input,.aw-sheet .aw-count-control select{height:44px;min-height:44px}}
