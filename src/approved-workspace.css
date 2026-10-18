@@ -49,3 +49,7 @@
 .approved-training-marker{flex:0 0 100%;color:var(--green-text,var(--green));font:11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .approved-live .empty-calendar-workspace>p,.approved-live .empty-calendar-workspace>.button{margin-left:0;margin-right:0}
 .approved-live .empty-calendar-workspace>.week-slot-list{margin-inline:0}
+
+/* Reviewed client lifecycle and personal exercise mapping reuse the workspace tokens. */
+.oct18-dialog{width:min(640px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:24px}.oct18-dialog::backdrop{background:#0008}.oct18-dialog label{display:grid;gap:6px}.oct18-dialog select{width:100%}
+.oct18-tracking-inbox{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px}.oct18-tracking-inbox>header{display:flex;align-items:center;justify-content:space-between;gap:8px}.oct18-tracking-inbox h2{font-size:16px}.oct18-tracking-inbox>p,.oct18-review-row small{font-size:12px;color:var(--text-muted)}.oct18-review-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}.oct18-review-row small{display:block;margin-top:4px}

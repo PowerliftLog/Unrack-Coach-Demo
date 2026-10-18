@@ -31,7 +31,7 @@
 .aw-section>.aw-add{width:100%;margin-top:6px;border-style:dashed;background:var(--surface-subtle);font-size:12px;text-align:left}.aw-muted{color:var(--text-muted);font-size:12px}
 .aw-workout-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px}.aw-workout-actions .aw-delete{background:transparent;border:0;color:var(--text-muted)}
 .aw-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}.aw-save-row>span{font:10px/1.5 'IBM Plex Mono',monospace;color:var(--text-muted)}.aw-save-row>div{display:flex;gap:6px}
-.aw-empty{padding:30px 16px;text-align:center;border:1px dashed var(--border);background:var(--surface-subtle)}.aw-empty>button{margin:8px 5px}.aw-empty p{color:var(--text-muted)}
+.aw-empty{padding:30px 16px;text-align:center;border:1px dashed var(--border);background:var(--surface-subtle)}.aw-empty>button{display:block;margin:8px auto}.aw-empty p{color:var(--text-muted)}
 .approved-workout-editor .aw-primary:not(:disabled),.aw-dialog .aw-primary:not(:disabled){background:var(--gold-soft);border-color:var(--action-border)}.aw-error{color:var(--red);font:12px/1.5 var(--aw-sans)}
 .aw-dialog{width:min(720px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:9px}.aw-dialog::backdrop{background:#0008}.aw-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--border)}
 .aw-dialog label{margin:10px 0}.aw-dialog label>input,.aw-dialog label>select,.aw-dialog label>textarea{width:100%;min-height:34px}.aw-dialog textarea{min-height:64px;resize:vertical}.aw-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.aw-fields .aw-wide{grid-column:1/-1}.aw-dialog .aw-check{display:flex;align-items:center;gap:8px}.aw-dialog .aw-check input{width:18px;min-height:18px}
@@ -58,5 +58,5 @@
 .aw-count-control label{display:block;font-size:0}
 .aw-sheet .aw-count-control select{width:100%;height:32px;min-height:32px;border:0;border-radius:0;background:transparent;padding:2px 4px;font:11px 'IBM Plex Mono',monospace}
 .aw-sheet .aw-count-range{width:100%;min-height:32px;padding:2px;border:0;background:transparent;font:10px 'IBM Plex Mono',monospace}
-.aw-count-caption{padding-left:8px;color:var(--text-muted);font:10px var(--aw-sans)}
+.aw-sheet .aw-count-label{text-align:right;padding-right:8px}.aw-count-caption{color:var(--text-muted);font:10px var(--aw-sans)}
 @media(max-width:760px){.aw-exercise-name,.aw-exercise-entry>input,.aw-sheet .aw-count-control select{height:44px;min-height:44px}}
