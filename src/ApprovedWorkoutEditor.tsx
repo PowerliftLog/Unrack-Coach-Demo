@@ -176,6 +176,8 @@ function validation(day: Draft, original: Draft): string[] {
   const optional = (value: number | null, min: number, max: number, decimals = 0) => value === null || number(value, min, max, decimals)
   if (!text(day.label, 120, true) || !text(day.subtitle, 500) || !text(day.workout_instruction, 1000)) errors.push('Complete the workout name and remove blank-only or overly long notes.')
   if (day.movement_groups.length > 12 || exercises.length > 12 || exercises.reduce((sum, exercise) => sum + countOf(exercise), 0) > 20) errors.push('A day supports up to 12 sections, 12 exercises and 20 physical sets.')
+  const clearingWorkout = exercisesOf(original).length > 0 && !day.subtitle?.trim() && !day.workout_instruction?.trim() && day.movement_groups.length === 0 && day.label === weekdays[day.ordinal - 1]
+  if (!exercises.length && !day.marked_rest && !clearingWorkout) errors.push('Add at least one exercise before saving a workout.')
   if (day.marked_rest && exercises.length) errors.push('A recovery day cannot contain exercises.')
   for (const group of day.movement_groups) {
     const issue = group.group_type === 'superset' ? supersetIssue(group.exercises) : null
