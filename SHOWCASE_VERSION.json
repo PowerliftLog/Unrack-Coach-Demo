@@ -1,5 +1,5 @@
 {
-  "source_revision": "56bcdb8f1c764aa924327088f71b03a671b12d30",
+  "source_revision": "1bda5cff60d0dcdc744765b521550b7ee29dc70d",
   "source_dirty": false,
   "description": "Curated offline Coach UI export; no private history or backend.",
   "files": {
@@ -24,9 +24,10 @@
     "src/ClientOverview.tsx": "a7aa70e67b5def30a8d120802308e1ef6b092665fd0a78fcf934d0057f284127",
     "src/CoachClientRemoval.tsx": "fde8232ca8656c14d73751af4786682dc7a510886eec7f33632de9944ca0ad95",
     "src/CoachNotes.tsx": "69822448aeb9e7ce99bf04649078deef65651d570deafbe4efff40ea03eff5e1",
-    "src/ConnectedCoachApp.tsx": "251073c8adbf48527e9d0f66f56bca63c01af569fd2de9911fd742eabadaad43",
+    "src/ConnectedCoachApp.tsx": "7c1a8b0eb4f026d29f2efc1291bf1924492b894ceb937213fd2c2644e5e15558",
     "src/demo/public-demo.css": "4e83d5368273d89d7a43551a5ab87ce836d0101b262693da18fd5d8baec9ea68",
     "src/demo/PublicDemo.tsx": "431be9008f6807faaf336e9a8970a088667ffa7a5412da0842bde76e5c8d986d",
+    "src/lib/athlete-setup-message.ts": "896e4f50025e76b1415dfd2274d409e2949940ceb63327d1088050451b68ec08",
     "src/lib/calendar.ts": "c662112d1b4a16320879ae4c96a2f903298f222769c56941d577622a35fcdec0",
     "src/lib/coach-api.ts": "3185be30a95b3af16ea7afe73f829d4ecf2148eaf97780fb7b8c5d1af7b7a210",
     "src/lib/coach-service.ts": "cc6970be8c04b2f28570c64141c5bad17e77a1caf8bbb3c11ab32b13d6278f5e",

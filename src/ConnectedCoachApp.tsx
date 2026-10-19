@@ -1,3 +1,4 @@
+import { athleteSetupMessage } from './lib/athlete-setup-message'
 import { CoachClientRemoval } from './CoachClientRemoval'
 import { PersonalTrackingInbox } from './PersonalTrackingInbox'
 import type { October18CoachApi, CoachDashboardRosterPageV4, CoachDashboardRosterItemV4, CoachTemplateReadinessV1, PreviewBuilderWeekCopyV3Input, PreviewBuilderWeekCopyV3Result } from './lib/coach-api'
@@ -574,8 +575,16 @@ export function AthletePairingDialog({ api, athleteId, athleteName, onClose }: {
   }
   const copy = async () => {
     if (!invite) return
-    try { if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable'); await navigator.clipboard.writeText(invite.url); setMessage('Invite link copied.') }
-    catch { input.current?.focus(); input.current?.select(); setMessage('Select and copy the link below.') }
+    try { if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable'); await navigator.clipboard.writeText(invite.url); setNotice(true); setMessage('Invite link copied.') }
+    catch { input.current?.focus(); input.current?.select(); setNotice(false); setMessage('Select and copy the link below.') }
+  }
+  const copySetupMessage = async () => {
+    if (!invite) return
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable')
+      await navigator.clipboard.writeText(athleteSetupMessage(athleteName))
+      setNotice(true); setMessage('Setup message copied. Send it first, then send the invitation link separately.')
+    } catch { setNotice(false); setMessage('Could not copy the setup message. Try again using a browser that allows clipboard access.') }
   }
   const share = async () => {
     if (!invite) return
@@ -588,7 +597,7 @@ export function AthletePairingDialog({ api, athleteId, athleteName, onClose }: {
     <p className="phase9-pairing-risk">Send this link only to {athleteName}. Anyone with the link can access their published program and workout history. It works once and expires after 48 hours. Connecting a new phone disconnects their previous phone.</p>
     {!status ? <p role="status">Loading connection status…</p> : <><p className="phase9-pairing-status"><strong>{pairingStateLabel[status.state]}</strong>{status.expected_receipts > 0 && <span>{status.acknowledged_receipts} of {status.expected_receipts} workouts downloaded · {status.opened_receipts} of {status.expected_receipts} opened</span>}</p>
       {status.invite_expires_at && status.invite_active && <p>Connection link expires {new Date(status.invite_expires_at).toLocaleString()}.</p>}</>}
-    {invite && <section className="phase9-invite-once" aria-label="One-time invite"><p><strong>Copy or share this now.</strong> This link will not be shown again.</p><img src={invite.qr} alt="QR code for athlete invitation" /><label>Invitation link<input ref={input} readOnly value={invite.url} onFocus={event => event.currentTarget.select()} /></label><small>Expires {new Date(invite.expiresAt).toLocaleString()}.</small><div className="dialog-actions"><button className="button outline" onClick={() => void copy()}>Copy link</button><button className="button primary" onClick={() => void share()}>Share</button></div></section>}
+    {invite && <section className="phase9-invite-once" aria-label="One-time invite"><p><strong>Copy or share this now.</strong> This link will not be shown again.</p><img src={invite.qr} alt="QR code for athlete invitation" /><label>Invitation link<input ref={input} readOnly value={invite.url} onFocus={event => event.currentTarget.select()} /></label><small>Expires {new Date(invite.expiresAt).toLocaleString()}.</small><p>Send the setup message first, then send the invitation link in a separate message.</p><div className="dialog-actions"><button className="button outline" disabled={busy} onClick={() => void copySetupMessage()}>Copy setup message</button><button className="button outline" disabled={busy} onClick={() => void copy()}>Copy link</button><button className="button primary" onClick={() => void share()}>Share</button></div></section>}
     {message && <p role="status" className={notice ? 'workspace-notice' : 'workspace-error'}>{message}</p>}
     <div className="dialog-actions">{status?.invite_active && <button className="button outline" disabled={busy} onClick={() => void mutate('revoke-invite')}>Cancel connection link</button>}{activeDevice && <button className="button outline" disabled={busy} onClick={() => void mutate('revoke-device')}>Disconnect phone</button>}<button className="button primary" disabled={busy || !status} onClick={() => void mutate('issue')}>{busy ? 'Working…' : activeDevice ? 'Connect new phone' : 'Create connection link'}</button><button className="button outline" disabled={busy} onClick={onClose}>Done</button></div>
   </div></Modal>
