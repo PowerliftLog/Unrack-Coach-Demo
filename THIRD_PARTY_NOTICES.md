@@ -14,3 +14,6 @@ https://www.apache.org/licenses/LICENSE-2.0
 
 The UI requests Barlow Condensed and IBM Plex Mono through Google Fonts.
 These fonts use the SIL Open Font License; no font binaries are redistributed here.
+
+Excel export uses ExcelJS 4.4.0, Copyright (c) 2014–2019 Guyon Roche,
+under the MIT License. The full text is included in LICENSES/ExcelJS-MIT.txt.

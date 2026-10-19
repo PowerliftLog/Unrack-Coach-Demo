@@ -2441,7 +2441,7 @@ function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecy
       }
       if (generation !== detailGeneration.current || assignmentRef.current !== selectedAssignment || detailRef.current?.detail_read_token !== image.detail_read_token) throw new CoachApiError('assignment_read_changed', 409)
       const athleteName = roster.find(item => item.athlete_id === image.athlete_id)?.roster_name ?? initialAthleteName ?? 'Athlete'
-      downloadProgramXlsx(buildProgramExportSheets(image, days, athleteName), image.program_name)
+      await downloadProgramXlsx(buildProgramExportSheets(image, days, athleteName), image.program_name, () => generation === detailGeneration.current && assignmentRef.current === selectedAssignment && detailRef.current?.detail_read_token === image.detail_read_token)
       setNotice('Excel program downloaded.')
     } catch (cause) {
       setError(cause instanceof CoachApiError ? errorText(cause) : cause instanceof Error ? cause.message : 'The Excel export could not be completed.')
