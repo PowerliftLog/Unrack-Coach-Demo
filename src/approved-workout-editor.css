@@ -60,3 +60,10 @@
 .aw-sheet .aw-count-range{width:100%;min-height:32px;padding:2px;border:0;background:transparent;font:10px 'IBM Plex Mono',monospace}
 .aw-sheet .aw-count-label{text-align:right;padding-right:8px}.aw-count-caption{color:var(--text-muted);font:10px var(--aw-sans)}
 @media(max-width:760px){.aw-exercise-name,.aw-exercise-entry>input,.aw-sheet .aw-count-control select{height:44px;min-height:44px}}
+
+/* Device recovery stays separate from the server Save status. */
+.aw-recovery{margin:0 0 16px;padding:12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface-subtle)}
+.aw-recovery>p{margin:0;color:var(--text-muted);font-size:12px}.aw-recovery-candidate{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:12px;margin-top:12px;border-top:1px solid var(--border)}
+.aw-recovery-candidate strong,.aw-recovery-candidate span{display:block}.aw-recovery-candidate span{margin-top:2px;color:var(--text-muted);font:10px/1.5 'IBM Plex Mono',monospace}.aw-recovery-candidate p{margin:6px 0 0;max-width:560px}.aw-recovery-candidate>div:last-child{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+.aw-dialog textarea.aw-backup-review{height:55vh;min-height:220px;font:12px/1.6 'IBM Plex Mono',monospace;white-space:pre}
+@media(max-width:760px){.aw-recovery-candidate{align-items:stretch;flex-direction:column}.aw-recovery button{min-height:44px}.aw-dialog textarea.aw-backup-review{white-space:pre-wrap}}
