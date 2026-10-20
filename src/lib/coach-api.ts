@@ -98,7 +98,13 @@ export type CoachAthleteMetricsV1 = { contract_version: 1; gym_id: string; athle
         unit: 'lb' | 'kg' | null; rpe: number | null; completed: boolean }> }> }> }
 export type CoachAthleteNotesV1 = { contract_version: 1; gym_id: string; athlete_id: string; text: string; version: number; updated_at: string | null }
 export type CoachAthleteActivityPageV1 = CoachRecentActivityPageV1 & {summary:{completed:number;skipped:number;last_session:{performed_at:string;day_label:string}|null}}
+export type CoachAthleteRecentWorkoutsV1 = {
+  contract_version: 1; gym_id: string; athlete_id: string
+  window_start: string; window_end: string; items: CoachRecentActivityItemV1[]
+  summary: {completed: number; skipped: number; last_session: CoachRecentActivityItemV1 | null}
+}
 export type CoachOverviewApi = {
+  getCoachAthleteRecentWorkoutsV1(input:{gym:string;athlete:string}):Promise<CoachAthleteRecentWorkoutsV1>
   getCoachAthleteNotesV1(input:{target_gym:string;target_athlete:string}):Promise<CoachAthleteNotesV1>
   saveCoachAthleteNotesV1(input:{request_id:string;target_gym:string;target_athlete:string;expected_version:number;note_text:string}):Promise<CoachAthleteNotesV1>
   getCoachAthleteActivityPageV1(input:{gym:string;athlete:string;cursor:CoachRecentActivityCursorV1|null;page_size:number}):Promise<CoachAthleteActivityPageV1>
@@ -889,6 +895,7 @@ export type AppendCoachProgramWeekV1Input = {
   request_id: Phase4Uuid; program: Phase4Uuid; assignment: Phase4Uuid; expected_builder_version: number
 }
 export interface PercentageProgrammingApi {
+  getCoachAthleteRecentWorkoutsV1?: CoachOverviewApi['getCoachAthleteRecentWorkoutsV1']
   getCoachAthleteNotesV1?: CoachOverviewApi['getCoachAthleteNotesV1']
   saveCoachAthleteNotesV1?: CoachOverviewApi['saveCoachAthleteNotesV1']
   getCoachAthleteActivityPageV1?: CoachOverviewApi['getCoachAthleteActivityPageV1']
@@ -1897,6 +1904,38 @@ function phase9ActivityItem(value: unknown): value is CoachRecentActivityItemV1 
     && phase4Uuid(value.assignment_id) && phase4AuthoredText(value.program_name, 120)
     && phase4AuthoredText(value.day_label, 120) && phase4Enum(value.outcome, ['completed', 'skipped'])
     && phase4Timestamp(value.performed_at) && phase4Timestamp(value.recorded_at)
+}
+
+// Date.parse truncates PostgreSQL microseconds. Keep the remainder for exact
+// performed ordering and exclusive UTC boundaries, including offset timestamps.
+function activityTimestampMicros(value: string): bigint {
+  const fraction = value.match(/\.(\d{1,6})/)?.[1] ?? ''
+  return BigInt(Date.parse(value)) * 1000n + BigInt(fraction.padEnd(6, '0').slice(3))
+}
+function athleteRecentWorkouts(value: unknown, input: {gym:string;athlete:string}): value is CoachAthleteRecentWorkoutsV1 {
+  if (!exactKeys(value, ['contract_version','gym_id','athlete_id','window_start','window_end','items','summary'])
+    || value.contract_version !== 1 || value.gym_id !== input.gym || value.athlete_id !== input.athlete
+    || !phase4Timestamp(value.window_start) || !phase4Timestamp(value.window_end)) return false
+  const start = activityTimestampMicros(value.window_start), end = activityTimestampMicros(value.window_end)
+  if (end - start !== 7n * 86400000000n || start % 86400000000n !== 0n
+    || !phase4Array(value.items, 5, phase9ActivityItem) || !uniqueBy(value.items, item => item.activity_id)
+    || !value.items.every((item, index, items) => item.athlete_id === input.athlete
+      && activityTimestampMicros(item.performed_at) >= start && activityTimestampMicros(item.performed_at) < end
+      && (index === 0 || activityTimestampMicros(items[index-1].performed_at) > activityTimestampMicros(item.performed_at)
+        || activityTimestampMicros(items[index-1].performed_at) === activityTimestampMicros(item.performed_at) && items[index-1].activity_id.toLowerCase() > item.activity_id.toLowerCase()))
+    || !exactKeys(value.summary, ['completed','skipped','last_session'])
+    || !phase4Integer(value.summary.completed, 0, Number.MAX_SAFE_INTEGER)
+    || !phase4Integer(value.summary.skipped, 0, Number.MAX_SAFE_INTEGER)
+    || !phase4Nullable(value.summary.last_session, phase9ActivityItem)) return false
+  const total = value.summary.completed + value.summary.skipped
+  const last = value.summary.last_session
+  const first = value.items[0]
+  return Number.isSafeInteger(total) && value.items.length === Math.min(5, total)
+    && value.items.filter(item => item.outcome === 'completed').length <= value.summary.completed
+    && value.items.filter(item => item.outcome === 'skipped').length <= value.summary.skipped
+    && (last === null ? total === 0 : last.athlete_id === input.athlete
+      && activityTimestampMicros(last.performed_at) < end
+      && (value.items.length === 0 ? activityTimestampMicros(last.performed_at) < start : Object.keys(last).every(key => last[key as keyof CoachRecentActivityItemV1] === first[key as keyof CoachRecentActivityItemV1])))
 }
 
 function phase9ActivityCursor(value: unknown): value is CoachRecentActivityCursorV1 {
@@ -4230,6 +4269,7 @@ const phase55CalendarCreate = (value: unknown, input: CreateCalendarProgramInput
     addRosterAthlete: (input) => post('/api/add-roster-athlete', input),
     getCoachAthleteNotesV1: (input:{target_gym:string;target_athlete:string}) => post<CoachAthleteNotesV1>('/api/coach-athlete-notes-v1',input,{requestMaximum:phase4DefaultRequestMaxBytes,resultMaximum:phase5SmallResultMaxBytes,trustedErrors:phase55DashboardErrors,decode:(value):value is CoachAthleteNotesV1 => notesResult(value,input)}),
     saveCoachAthleteNotesV1: (input:{request_id:string;target_gym:string;target_athlete:string;expected_version:number;note_text:string}) => post<CoachAthleteNotesV1>('/api/save-coach-athlete-notes-v1',input,{requestMaximum:65536,resultMaximum:phase5SmallResultMaxBytes,trustedErrors:phase55DashboardErrors,decode:(value):value is CoachAthleteNotesV1 => notesResult(value,input)}),
+    getCoachAthleteRecentWorkoutsV1: (input:{gym:string;athlete:string}) => post<CoachAthleteRecentWorkoutsV1>('/api/coach-athlete-recent-workouts-v1', input, {requestMaximum:phase4DefaultRequestMaxBytes,resultMaximum:phase5SmallResultMaxBytes,trustedErrors:phase55DashboardErrors,decode:(value):value is CoachAthleteRecentWorkoutsV1 => athleteRecentWorkouts(value,input)}),
     getCoachAthleteActivityPageV1: (input:Parameters<CoachOverviewApi['getCoachAthleteActivityPageV1']>[0]) => post<CoachAthleteActivityPageV1>('/api/coach-athlete-activity-page-v1',input,{requestMaximum:phase4DefaultRequestMaxBytes,resultMaximum:phase5SmallResultMaxBytes,trustedErrors:phase55DashboardErrors,decode:(value):value is CoachAthleteActivityPageV1 => {
       if(!exactKeys(value,['contract_version','items','has_more','next_cursor','summary']))return false
       return exactKeys(value.summary,['completed','skipped','last_session']) && phase4Nullable(value.summary.last_session,(item):item is {performed_at:string;day_label:string}=>exactKeys(item,['performed_at','day_label'])&&phase4Timestamp(item.performed_at)&&phase4NonemptyText(item.day_label,120)) && phase4Integer(value.summary.completed,0,Number.MAX_SAFE_INTEGER) && phase4Integer(value.summary.skipped,0,Number.MAX_SAFE_INTEGER) && phase9ActivityPage({contract_version:value.contract_version,items:value.items,has_more:value.has_more,next_cursor:value.next_cursor},input) && (value.items as CoachRecentActivityItemV1[]).every(item=>item.athlete_id===input.athlete)
