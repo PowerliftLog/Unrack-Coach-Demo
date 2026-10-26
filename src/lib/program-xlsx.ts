@@ -8,6 +8,37 @@ type Exercise = { name: string; notes: string; sets: Set[] }
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const effort = { L: 'Light', M: 'Moderate', MH: 'Moderately heavy', H: 'Heavy' }
 const text = (v: string | number | null | undefined) => v == null ? '' : String(v)
+// A4 landscape pages cannot print an arbitrarily tall spreadsheet row. Twelve
+// wrapped lines stay well below one page, including the repeated Cycle header.
+const maxPrintableLines = 12
+// Excel column widths are based on the default digit glyph. Arial W can take
+// nearly twice that space in LibreOffice, so budget half the nominal width.
+const printableLineWidth = (width: number) => Math.max(8, Math.floor(width * 0.5))
+const printedLines = (value: Value, width: number) => text(value).split('\n').reduce(
+  (sum, line) => sum + Math.max(1, Math.ceil(line.length / printableLineWidth(width))), 0)
+function printableChunks(value: Value, width: number, linesPerChunk = maxPrintableLines - 4): Value[] {
+  if (typeof value !== 'string' || printedLines(value, width) <= maxPrintableLines) return [value]
+  const lineWidth = printableLineWidth(width)
+  const parts: string[] = []
+  for (const line of value.match(/[^\n]*\n|[^\n]+$/g) ?? ['']) {
+    let remaining = line
+    while (remaining.length > lineWidth) {
+      const space = remaining.lastIndexOf(' ', lineWidth - 1)
+      let cut = space > lineWidth / 2 ? space + 1 : lineWidth
+      // XLSX writes each chunk as an independent string. Never leave half of
+      // a UTF-16 surrogate pair in either cell (Excel would replace it).
+      if (cut < remaining.length && cut > 0 && /[\uD800-\uDBFF]/.test(remaining[cut - 1])
+        && /[\uDC00-\uDFFF]/.test(remaining[cut])) cut--
+      parts.push(remaining.slice(0, cut))
+      remaining = remaining.slice(cut)
+    }
+    if (remaining) parts.push(remaining)
+  }
+  const chunks: string[] = []
+  // Prescription continuations need more room for the week/exercise identity.
+  for (let i = 0; i < parts.length; i += linesPerChunk) chunks.push(parts.slice(i, i + linesPerChunk).join(''))
+  return chunks
+}
 const range = (min: number | null, max: number | null) => max == null || min === max ? text(min) : `${text(min)}–${max}`
 const notes = (...values: (string | null | undefined)[]) => values.filter(Boolean).join('\n')
 const setCount = (s: Set) => 'sets' in s ? s.sets ?? s.sets_min : s.sets_min
@@ -83,34 +114,66 @@ export function buildProgramExportSheets(detail: CoachAssignmentDetailV4 | Coach
     const lanes = [...new Set(selected.filter(s => s.exercises.length > 0).map(s => s.slot.day_ordinal))].sort((a, b) => a - b)
     if (!lanes.length) continue
     const sheet = blankSheet(`Cycle ${Math.floor(start / 4) + 1}`, lanes.flatMap(() => [39, 25, 29]))
-    const count = lanes.length * 3, blockSize = block.length + 2
+    const count = lanes.length * 3
     const height = Math.max(...selected.map(s => s.exercises.length))
-    sheet.rows = Array.from({ length: 3 + height * blockSize }, () => Array<Value>(count).fill(null))
+    const prepared = lanes.map((ordinal, lane) => {
+      const col = lane * 3, scheduled = selected.filter(s => s.slot.day_ordinal === ordinal)
+      const titles = [...new Set(scheduled.filter(s => s.exercises.length).map(s => s.day?.mode === 'editable' ? s.day.content.subtitle : null).filter(Boolean))]
+      const exercises = Array.from({ length: height }, (_, index) => {
+        const names = [...new Set(scheduled.map(s => s.exercises[index]?.name).filter(Boolean))]
+        const weeks = block.map(week => {
+          const entry = scheduled.find(s => s.week === week.week_ordinal), exercise = entry?.exercises[index]
+          if (!exercise) return { prescription: `W${week.week_ordinal} —`, note: null, name: names.join(' / '), hasExercise: false }
+          const content = entry!.day?.mode === 'editable' ? entry!.day.content : null
+          return {
+            prescription: `W${entry!.week} ${names.length > 1 ? `${exercise.name}: ` : ''}${exercise.sets.length ? prescriptions(exercise.sets, detail.default_unit) : 'Not programmed'}`,
+            note: notes(index === 0 ? content?.workout_instruction : null, index === 0 && titles.length > 1 ? content?.subtitle : null, exercise.notes) || null,
+            name: exercise.name,
+            hasExercise: true,
+          }
+        })
+        return { names, weeks }
+      })
+      return { col, ordinal, titles, exercises }
+    })
+    const rowHeights = Array.from({ length: height }, (_, index) => block.map((_, weekIndex) => Math.max(1,
+      ...prepared.map(lane => {
+        const item = lane.exercises[index].weeks[weekIndex]
+        return Math.max(printableChunks(item.prescription, sheet.widths[lane.col], 4).length,
+          printableChunks(item.note, sheet.widths[lane.col + 2]).length)
+      }))))
+    const blockStarts: number[] = []
+    let nextRow = 3
+    for (const heights of rowHeights) { blockStarts.push(nextRow); nextRow += 2 + heights.reduce((a, b) => a + b, 0) }
+    sheet.rows = Array.from({ length: nextRow }, () => Array<Value>(count).fill(null))
     sheet.rows[0][0] = title
     const dates = selected.map(s => s.slot.planned_date).filter((date): date is string => !!date).sort()
     sheet.rows[1][0] = `${calendarDate((block[0].week_ordinal - 1) * 7) ?? dates[0] ?? ''} – ${calendarDate(block.at(-1)!.week_ordinal * 7 - 1) ?? dates.at(-1) ?? ''}     Weeks ${block[0].week_ordinal}–${block.at(-1)!.week_ordinal}     Weights in ${detail.default_unit} unless shown otherwise`
     sheet.merges = [[0, 0, 0, count - 1], [1, 0, 1, count - 1]]
     sheet.headers = [0, 2]
-    lanes.forEach((ordinal, lane) => {
-      const col = lane * 3, scheduled = selected.filter(s => s.slot.day_ordinal === ordinal)
-      const titles = [...new Set(scheduled.filter(s => s.exercises.length).map(s => s.day?.mode === 'editable' ? s.day.content.subtitle : null).filter(Boolean))]
+    prepared.forEach(lane => {
+      const { col, ordinal, titles } = lane
       sheet.rows[2][col] = `${weekdays[ordinal - 1] ?? `Day ${ordinal}`}${titles.length === 1 ? `\n${titles[0]}` : ''}`
       sheet.rows[2][col + 1] = 'Weight Tracking / Notes'; sheet.rows[2][col + 2] = 'Coach Notes'
-      const maxExercises = Math.max(...scheduled.map(s => s.exercises.length))
-      for (let index = 0; index < maxExercises; index++) {
-        const row = 3 + index * blockSize
-        const names = [...new Set(scheduled.map(s => s.exercises[index]?.name).filter(Boolean))]
+      for (let index = 0; index < lane.exercises.length; index++) {
+        const row = blockStarts[index], { names, weeks } = lane.exercises[index]
+        if (!names.length) continue
         sheet.rows[row][col] = names.join(' / ')
         sheet.headers.push(row)
         for (let weekIndex = 0; weekIndex < block.length; weekIndex++) {
-          const r = row + weekIndex + 1, entry = scheduled.find(s => s.week === block[weekIndex].week_ordinal), exercise = entry?.exercises[index]
-          if (!exercise) { sheet.rows[r][col] = `W${block[weekIndex].week_ordinal} —`; continue }
-          sheet.rows[r][col] = `W${entry!.week} ${names.length > 1 ? `${exercise.name}: ` : ''}${exercise.sets.length ? prescriptions(exercise.sets, detail.default_unit) : 'Not programmed'}`
-          const content = entry!.day?.mode === 'editable' ? entry!.day.content : null
-          sheet.rows[r][col + 2] = notes(index === 0 ? content?.workout_instruction : null, index === 0 && titles.length > 1 ? content?.subtitle : null, exercise.notes) || null
-          sheet.inputCells.push([r, col + 1])
+          const r = row + 1 + rowHeights[index].slice(0, weekIndex).reduce((a, b) => a + b, 0)
+          const item = weeks[weekIndex]
+          const prescriptionParts = printableChunks(item.prescription, sheet.widths[col], 4)
+          const noteParts = printableChunks(item.note, sheet.widths[col + 2])
+          for (let part = 0; part < rowHeights[index][weekIndex]; part++) {
+            if (part < prescriptionParts.length) sheet.rows[r + part][col] = part === 0
+              ? prescriptionParts[part] : `W${block[weekIndex].week_ordinal} ${item.name} (continued): ${prescriptionParts[part]}`
+            else if (part < noteParts.length && item.hasExercise) sheet.rows[r + part][col] = `W${block[weekIndex].week_ordinal} ${item.name} (continued)`
+            if (part < noteParts.length) sheet.rows[r + part][col + 2] = noteParts[part]
+          }
+          if (item.hasExercise) sheet.inputCells.push([r, col + 1])
         }
-        sheet.separators.push(row + blockSize - 1)
+        sheet.separators.push(row + 1 + rowHeights[index].reduce((a, b) => a + b, 0))
       }
     })
     sheet.headers = [...new Set(sheet.headers)]; sheet.separators = [...new Set(sheet.separators)]
@@ -166,7 +229,7 @@ export async function programXlsxBuffer(sheets: ProgramExportSheet[]): Promise<A
         cell.alignment = { vertical: 'middle', wrapText: true }
         if (sheet.name !== 'Program Overview' && r >= 3) cell.border = { top: { style: 'thin', color: { argb: 'FFA6A6A6' } }, bottom: { style: 'thin', color: { argb: 'FFA6A6A6' } }, left: { style: 'thin', color: { argb: 'FFA6A6A6' } }, right: { style: 'thin', color: { argb: 'FFA6A6A6' } } }
       })
-      const lines = Math.max(1, ...values.map((value, c) => text(value).split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(8, sheet.widths[c] * 1.05))), 0)))
+      const lines = Math.max(1, ...values.map((value, c) => printedLines(value, sheet.widths[c])))
       row.height = Math.max(24, lines * 15 + 8)
     })
     for (const [r1, c1, r2, c2] of sheet.merges) ws.mergeCells(r1 + 1, c1 + 1, r2 + 1, c2 + 1)
@@ -189,7 +252,7 @@ export async function programXlsxBuffer(sheets: ProgramExportSheet[]): Promise<A
       for (let c = 1; c <= sheet.widths.length; c++) row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A86E8' } }
     }
     for (const [r, c] of sheet.inputCells) ws.getCell(r + 1, c + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F7FD' } }
-    ws.pageSetup = { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+    ws.pageSetup = { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, ...(sheet.name.startsWith('Cycle ') ? { printTitlesRow: '1:3' } : {}) }
   }
   return await book.xlsx.writeBuffer() as ArrayBuffer
 }

@@ -1,5 +1,5 @@
 {
-  "source_revision": "ed21f500a0d78e03da1758ce08e73d8350ee7e9b",
+  "source_revision": "db4088aa9ce8106547d4d6a94282b75af17f418c",
   "source_dirty": false,
   "description": "Curated offline Coach UI export; no private history or backend.",
   "files": {
@@ -25,7 +25,7 @@
     "src/ClientOverview.tsx": "3485892cc8f03285cc8896a3cf0a657c2aa9568b38417708d1ec34b6a2a214af",
     "src/CoachClientRemoval.tsx": "fde8232ca8656c14d73751af4786682dc7a510886eec7f33632de9944ca0ad95",
     "src/CoachNotes.tsx": "69822448aeb9e7ce99bf04649078deef65651d570deafbe4efff40ea03eff5e1",
-    "src/ConnectedCoachApp.tsx": "4069ff076c84106939d37857feeafa23b0ce3de71f31701cbbc02f0c8367ca63",
+    "src/ConnectedCoachApp.tsx": "87494e2d68a2487ed33738912ec8c3e093da669d895ba869fa32b431b938a748",
     "src/demo/public-demo.css": "4e83d5368273d89d7a43551a5ab87ce836d0101b262693da18fd5d8baec9ea68",
     "src/demo/PublicDemo.tsx": "abc6560440c712e99a2023731c4bfd198c0b61cda1a1828784fc257724783be9",
     "src/lib/athlete-setup-message.ts": "896e4f50025e76b1415dfd2274d409e2949940ceb63327d1088050451b68ec08",
@@ -35,7 +35,7 @@
     "src/lib/config.ts": "b389d876e095e00610e8ca4c04b9d17c280fdbaa4323991b240c48e4cfcb391a",
     "src/lib/estimated-1rm.ts": "6e5b12a7c51e28d3ef246ee9ef9a46fb4c3b541499d0ce730af9b12f72017112",
     "src/lib/profile-max-entry.ts": "20ff7c3763a2401b830d09bbbf937bb23b4b3e86976f8aa2a3f54c9bc1e7bb21",
-    "src/lib/program-xlsx.ts": "4d838a84fa2a3efbbb70f9870736a7b3bd1a8fb660bfcafa7cdcebd2a95cda3d",
+    "src/lib/program-xlsx.ts": "4dde87e9d52868c270d0122caa18623de8494b018ff335c3f644e3abbfeae237",
     "src/lib/pwa-pairing-api.ts": "444bb9816972eb13e8bbb54a2bf254d18a85a3dc7f15b71163a48ac4fd05afe8",
     "src/lib/superset.ts": "cceb2f8bf91abdfcb6a9b231f49aae94880058352b3ff2e53b1d0aed71421920",
     "src/lib/theme.ts": "bdebe0f6175b7fff29682b4e3af1d2bc20fdcd1bd53e02bf8b2af04ab6e10e68",
