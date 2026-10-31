@@ -18,8 +18,8 @@
 .aw-section>header input{font:500 17px/1.3 var(--aw-sans);flex:1;min-width:0;padding:4px 0;border:0;border-radius:0;background:transparent}
 .aw-section>header h2{font-size:17px;margin-right:auto}.aw-section>header>span{color:var(--text-muted);font-size:11px}.aw-section>header button{border:0;background:transparent;font-size:11px;padding:4px 6px}
 .aw-sheet-scroll{max-width:100%;overflow-x:auto;border:1px solid var(--border);scrollbar-gutter:auto}
-.aw-sheet{width:100%;min-width:600px;table-layout:fixed;border-collapse:collapse;font:12px 'IBM Plex Mono',monospace}
-.aw-sheet .aw-col-exercise{width:auto}.aw-sheet .aw-col-sets{width:60px}.aw-sheet .aw-col-reps{width:76px}.aw-sheet .aw-col-load{width:210px}.aw-sheet .aw-col-rpe{width:58px}.aw-sheet .aw-col-details{width:34px}
+.aw-sheet{width:100%;min-width:680px;table-layout:fixed;border-collapse:collapse;font:12px 'IBM Plex Mono',monospace}
+.aw-sheet .aw-col-exercise{width:auto}.aw-sheet .aw-col-sets{width:56px}.aw-sheet .aw-col-reps{width:64px}.aw-sheet .aw-col-load{width:180px}.aw-sheet .aw-col-rpe{width:52px}.aw-sheet .aw-col-details{width:30px}
 .aw-sheet thead th{height:28px;padding:4px 6px;background:var(--surface-subtle);color:var(--text-muted);font:10px 'IBM Plex Mono',monospace;text-align:left;border-bottom:1px solid var(--border);font-weight:400}.aw-sheet thead th:not(:first-child){text-align:center}
 .aw-sheet td{padding:0;height:33px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);vertical-align:middle}.aw-sheet td:last-child{border-right:0}.aw-sheet tbody:last-child tr:last-child td{border-bottom:0}
 .aw-sheet td>input,.aw-sheet td>select,.aw-exercise-name>input,.aw-load-cell>input,.aw-load-cell>select{width:100%;height:32px;min-height:32px;padding:3px 6px;border:0;border-radius:0;background:transparent;font:12px 'IBM Plex Mono',monospace;text-align:center}

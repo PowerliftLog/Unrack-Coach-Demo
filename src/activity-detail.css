@@ -1,0 +1,62 @@
+.phase4-dialog:has(.phase9-activity-detail){width:min(100%,930px);max-width:min(930px,calc(100vw - 24px))}
+.phase9-activity-detail{width:min(100%,890px);max-height:none;overflow:visible}
+.phase9-activity-detail .activity-logbook{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+.activity-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.phase9-activity-detail-head h2,.phase9-activity-detail .activity-logbook h3,.phase9-activity-detail .activity-logbook h4{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-weight:500;letter-spacing:-.02em}
+.phase9-activity-detail-head h2{font-size:27px;line-height:1.15}
+.activity-logbook{min-width:0}
+.activity-logbook-intro{padding:14px 0 4px}
+.activity-logbook-intro p{color:var(--text-muted);margin:8px 0 0}
+.activity-outcome-badge{display:inline-block;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700}
+.activity-outcome-badge.completed{color:var(--green,#13723a);background:#e3f3e9}
+.activity-outcome-badge.skipped{color:var(--accent);background:var(--accent-soft)}
+.activity-state-warning{color:var(--accent)!important;font-weight:600}
+.activity-session-note{border-left:3px solid var(--accent);background:var(--surface-subtle);padding:11px 14px;margin:14px 0;border-radius:2px;font-size:13px;line-height:1.45}
+.activity-session-note strong{font-size:12px}.activity-session-note p{margin:5px 0 0!important}
+.phase9-activity-detail .activity-day-instruction{margin:10px 0 4px;color:var(--text-muted)}
+.phase9-activity-detail .activity-lift-list{margin-top:20px;border-top:1px solid var(--border);padding-top:17px}
+.phase9-activity-detail .activity-lift-list h3{font-size:21px;margin:0 0 13px}
+.phase9-activity-detail .activity-lift{margin:0 0 12px;padding:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface)}
+.activity-lift-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:13px 15px;background:var(--surface-subtle);border-bottom:1px solid var(--border)}
+.phase9-activity-detail .activity-lift-head h4{font-size:18px;line-height:1.3;margin:0}
+.phase9-activity-detail .activity-lift-head p{margin:4px 0 0;color:var(--text-muted)}
+.activity-lift-count{flex:none;background:var(--accent-soft);color:var(--accent);padding:5px 8px;border-radius:4px;font:600 10px 'IBM Plex Mono',monospace;white-space:nowrap}
+.phase9-activity-detail .activity-inline-note{margin:0;padding:10px 15px;border-bottom:1px solid var(--border);background:var(--surface-subtle)}
+.phase9-activity-detail .activity-set-group{margin:0;padding:0;border:0;border-radius:0}
+.phase9-activity-detail .activity-prescription{margin:0;padding:11px 15px;background:var(--surface);font-size:12px}
+.activity-prescription strong{font-weight:700}
+.activity-set-table-wrap{overflow-x:auto}
+.activity-set-table{width:100%;border-collapse:collapse;table-layout:auto;font-size:12px}
+.activity-set-table th,.activity-set-table td{text-align:left;padding:10px 12px;border-top:1px solid var(--border);vertical-align:top}
+.activity-set-table thead th{background:var(--surface-subtle);color:var(--text-muted);font:600 10px 'IBM Plex Mono',monospace;white-space:nowrap}
+.activity-set-table tbody th{font-weight:600}
+.activity-set-table tbody td{font-variant-numeric:tabular-nums}
+.activity-set-table tbody tr:last-child td,.activity-set-table tbody tr:last-child th{border-bottom:1px solid var(--border)}
+.activity-missing{color:var(--text-muted)}
+.activity-set-state{font-size:11px;white-space:nowrap}
+.activity-set-state.complete{color:var(--green,#13723a)}
+.activity-set-state.incomplete{color:var(--accent)}
+.activity-set-table .activity-set-note td{background:var(--surface-subtle);color:var(--text);font-size:12px;padding-left:20px}
+.phase9-activity-detail .activity-empty-sets{padding:0 15px 12px;color:var(--text-muted)}
+.activity-technical{margin:0 15px 10px;color:var(--text-muted);font-size:12px}
+.activity-technical summary{cursor:pointer;min-height:32px;display:list-item;list-style-position:inside;padding:7px 0;color:var(--accent);font-weight:600}
+.activity-technical p{margin:5px 0!important}
+.activity-unmatched .activity-lift-head{display:block}
+.activity-sync{border-top:1px solid var(--border);margin-top:20px;padding-top:12px}
+.activity-sync summary{cursor:pointer;color:var(--accent);font-weight:700;min-height:44px;display:list-item;list-style-position:inside;padding:12px 0}
+.activity-sync-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+.activity-sync-grid>div{display:grid;gap:4px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--surface-subtle)}
+.activity-sync-grid strong{font:600 10px 'IBM Plex Mono',monospace;color:var(--text-muted)}
+.activity-sync-grid span,.activity-sync-grid time{font-size:12px!important;font-family:inherit!important;color:var(--text)!important}
+.activity-sync>p{font-size:12px!important;color:var(--text-muted)}
+@media(max-width:600px){
+  .activity-lift-head{display:block}.activity-lift-count{display:inline-block;margin-top:9px}
+  .activity-set-table-wrap{overflow:visible}
+  .activity-set-table,.activity-set-table tbody,.activity-set-table tr{display:block;width:100%}
+  .activity-set-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .activity-set-table tbody tr:not(.activity-set-note){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px;padding:9px 12px;border-top:1px solid var(--border)}
+  .activity-set-table tbody th,.activity-set-table tbody td{display:block;padding:4px 0;border:0!important;min-width:0;overflow-wrap:anywhere}
+  .activity-set-table tbody tr:not(.activity-set-note) th:before,.activity-set-table tbody tr:not(.activity-set-note) td:before{content:attr(data-label);display:block;color:var(--text-muted);font:600 9px 'IBM Plex Mono',monospace;text-transform:uppercase;margin-bottom:4px}
+  .activity-set-table .activity-set-note td{padding:9px 12px;border:0}
+  .activity-sync-grid{grid-template-columns:1fr}
+}

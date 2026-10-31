@@ -39,7 +39,8 @@
 .approved-day-strip{grid-template-columns:var(--week-arrow-width) repeat(7,minmax(65px,1fr)) var(--week-arrow-width);gap:var(--week-column-gap)}
 .approved-live .builder-toolbar{margin-inline:0;padding-inline:0}
 .approved-home .phase8-status:not(.programmed){color:var(--action-border)}
-@media(max-width:1100px){.approved-program-nav{display:flex;flex-wrap:wrap;padding-left:calc(var(--week-arrow-width) + var(--week-column-gap))}.approved-program-nav>.program-views{display:flex}.approved-program-nav>div:last-child{margin-left:auto}}
+@media(max-width:1300px){.approved-program-nav{display:flex;flex-wrap:wrap;padding-left:calc(var(--week-arrow-width) + var(--week-column-gap))}.approved-program-nav>.program-views{display:flex;flex:0 0 auto}.approved-program-nav>.program-views>button{white-space:nowrap}.approved-program-nav>div:last-child{flex:0 0 auto;flex-wrap:wrap;max-width:100%;margin-left:auto}}
+@media(max-width:1000px){.approved-week-band>div{grid-template-columns:repeat(7,minmax(112px,1fr));overflow-x:auto}}
 
 /* Planned schedule, current selection, today, and keyboard focus have separate cues. */
 .approved-day-tabs>button{position:relative;flex-wrap:wrap;column-gap:6px;row-gap:4px}
