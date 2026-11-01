@@ -6,7 +6,7 @@ export type ProgramExportSheet = { name: string; rows: Value[][]; widths: number
 type Set = RichProgramSet | CoachSetGroupV3 | CoachSetGroupV5
 type Exercise = { name: string; notes: string; sets: Set[] }
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-const effort = { L: 'Light', M: 'Moderate', MH: 'Moderately heavy', H: 'Heavy' }
+const effort = { L: 'Light', M: 'Medium', MH: 'Medium-heavy', H: 'Heavy' }
 const text = (v: string | number | null | undefined) => v == null ? '' : String(v)
 // A4 landscape pages cannot print an arbitrarily tall spreadsheet row. Twelve
 // wrapped lines stay well below one page, including the repeated Cycle header.
@@ -188,7 +188,7 @@ export function buildProgramExportSheets(detail: CoachAssignmentDetailV4 | Coach
     ['Using this workbook', 'Each Cycle sheet contains up to four weeks. Record actual weights, reps or comments in the shaded Weight Tracking / Notes cells.'],
     ['Prescriptions', 'W labels identify program weeks. Comma-separated entries are successive prescriptions.'],
     ['Bodyweight', 'BW means bodyweight.'],
-    ['Effort', 'Light, Moderate, Moderately heavy and Heavy are the effort cues saved in your program.'], [],
+    ['Effort', 'Light, Medium, Medium-heavy and Heavy are the effort cues saved in your program.'], [],
     ['Week', ...activeDays.map(d => weekdays[d - 1] ?? `Day ${d}`), 'Workouts', 'Sets']]
   overview.merges = [[0, 0, 0, lastCol], [1, 0, 1, lastCol], ...[3, 4, 5, 6, 7].map(r => [r, 1, r, lastCol] as [number, number, number, number])]
   overview.headers = [0, 9]; overview.freezeRows = 10
