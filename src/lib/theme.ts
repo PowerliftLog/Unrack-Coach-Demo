@@ -17,11 +17,8 @@ export function applyTheme(theme: Theme, root: HTMLElement, storage?: ThemeStora
   storage?.setItem(themeStorageKey, theme)
 }
 
+// Coach ships one working theme (the builder's green palette). Dark mode is retired.
 export function initializeTheme(): Theme {
-  const theme = __LOCAL_REVIEW__ ? resolveInitialTheme(
-    window.localStorage,
-    window.matchMedia('(prefers-color-scheme: dark)'),
-  ) : 'light'
-  applyTheme(theme, document.documentElement)
-  return theme
+  applyTheme('light', document.documentElement)
+  return 'light'
 }

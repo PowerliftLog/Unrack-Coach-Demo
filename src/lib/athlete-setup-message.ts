@@ -13,5 +13,5 @@ Make sure you connect inside the app you added to your Home Screen. Connecting i
 
 During your workout, enter the weight and reps you actually do, check off each completed set, and add any notes you want me to see. When you're done, tap Finish workout and save the session so it syncs back to me.
 
-The link works once and expires after 48 hours. Send it only to your own device. If anything looks off or you get stuck, send me a screenshot and I'll help you out!`
+The link works once and expires after 7 days. Send it only to your own device. If anything looks off or you get stuck, send me a screenshot and I'll help you out!`
 }

@@ -57,7 +57,7 @@ function prescription(s: Set, unit: 'lb' | 'kg', count = setCount(s)) {
   const qualitative = s.qualitative ?? (typeof legacyLoad === 'string' ? legacyLoad : null)
   const load = mode === 'exact' ? `${text(s.exact_weight ?? legacyLoad)} ${weightUnit}`
     : mode === 'qualitative' ? qualitative && qualitative in effort ? effort[qualitative as keyof typeof effort] : text(qualitative)
-    : mode === 'bodyweight' ? 'BW' : mode === 'none' ? '' : mode === 'tbd' ? 'TBD'
+    : mode === 'athlete_choice' ? 'Lifter chooses' : mode === 'bodyweight' ? 'BW' : mode === 'none' ? '' : mode === 'tbd' ? 'TBD'
     : mode === 'rpe' ? `RPE ${range(s.rpe_min, s.rpe_max)}`
     : `${text(s.percent ?? legacyLoad)}% ${s.percent_basis_max_type === 'training_max' ? 'training max' : s.percent_basis_max_type === 'tested_1rm' ? 'tested 1RM' : 'max'}${s.resolved_weight == null ? '' : ` (${s.resolved_weight} ${weightUnit} resolved)`}${s.manual_override == null ? '' : ` (${s.manual_override} ${weightUnit} override)`}`
   return `${sets}x${dose}${load ? ` @ ${load}` : ''}${s.laterality === 'each_side' ? ' · each side' : s.laterality === 'alternating' ? ' · alternating' : ''}${s.load_basis === 'per_hand' ? ' · per hand' : s.load_basis === 'added_to_bodyweight' ? ' · added to bodyweight' : ''}${mode !== 'rpe' && s.rpe_min != null ? ` · RPE ${range(s.rpe_min, s.rpe_max)}` : ''}${s.rest_seconds == null ? '' : ` · rest ${s.rest_seconds} sec`}`

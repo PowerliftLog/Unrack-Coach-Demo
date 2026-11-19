@@ -444,6 +444,8 @@ button:focus-visible, input:focus-visible, [role='tab']:focus-visible {
 
 /* October 12 approved Smoke slate, using compatibility aliases for old tokens. */
 :is(.phase9-invite-once,.phase55-recovery,.athlete-pr-alert){background:var(--accent-soft)}
+/* Muted text on the soft green panels must keep 4.5:1 contrast (#5d6d69 there is 4.42:1). */
+:root:not([data-theme='dark']) :is(.phase9-invite-once,.phase55-recovery,.athlete-pr-alert){--text-muted:#566662}
 .button.primary:hover:not(:disabled),.button.primary:active:not(:disabled),.phase55-client:hover,.phase8-roster-row:hover{background:color-mix(in srgb,var(--accent-soft) 80%,var(--surface))}
 /* Notification Layout A applies only to the dashboard; full report review remains detailed. */
 .phase9-home-layout>.max-report-inbox{background:var(--accent-soft);border:1px solid var(--accent-line);border-left:3px solid var(--accent);padding:12px 16px;border-radius:8px;display:grid;grid-template-columns:auto 1fr;gap:0 16px;align-items:baseline}
@@ -493,3 +495,106 @@ button:focus-visible, input:focus-visible, [role='tab']:focus-visible {
 .empty-calendar-workspace>p,.empty-calendar-workspace>.button{margin-left:42px;margin-right:42px}
 @media(max-width:760px){.empty-calendar-workspace>p,.empty-calendar-workspace>.button{margin-left:16px;margin-right:16px}}
 @media(max-width:600px){.athlete-workspace-backdrop{padding-top:10px}.athlete-workspace{max-height:calc(100dvh - 20px)}}
+
+/* Working theme (Nov 13, 2026): the spreadsheet builder's green palette across
+   the whole Coach app. Single light theme; there is no dark mode. */
+:root {
+  --canvas: #f5f6f4;
+  --surface: #ffffff;
+  --surface-subtle: #f2f6f4;
+  --sidebar: #203a3a;
+  --sidebar-hover: #2c4c4a;
+  --text: #203234;
+  --text-muted: #5d6d69;
+  --text-on-dark: #ffffff;
+  --border: #d9e1dd;
+  --border-strong: #7f9a91;
+  --accent: #2f6257;
+  --accent-soft: #dcebe4;
+  --accent-line: #b8d0c8;
+  --green: #2f7a52;
+  --green-text: #22633f;
+  --green-soft: #e3f1e8;
+  --focus: #2f6257;
+}
+/* The signed-in sidebar is the dark teal bar from the builder; scoped tokens
+   flip everything inside it to light-on-dark. */
+.connected-roster,.sidebar,.approved-client-rail {
+  --text: #eef4f1;
+  --text-muted: #b9d7cc;
+  --surface: #2c4c4a;
+  --surface-subtle: #264442;
+  --border: #3d5f5c;
+  --border-strong: #6f918b;
+  --accent: #b9d7cc;
+  --accent-soft: #2c4c4a;
+  --gold: #b9d7cc;
+  --gold-soft: #2c4c4a;
+  --action-border: #b9d7cc;
+  --focus: #b9d7cc;
+  background: var(--sidebar);
+  color: var(--text);
+}
+.connected-roster .brand b,.connected-roster .brand small { color: #b9d7cc; }
+.connected-athlete { border-top-color: var(--border); }
+/* Primary actions are the builder's solid green buttons. */
+.button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+.button.primary:hover:not(:disabled),.button.primary:active:not(:disabled) { background: #285549; border-color: #285549; }
+.connected-roster .button.primary,.sidebar .button.primary { background: #b9d7cc; border-color: #b9d7cc; color: #203a3a; }
+.connected-roster .button.primary:hover:not(:disabled),.sidebar .button.primary:hover:not(:disabled) { background: #d6e5df; border-color: #d6e5df; }
+/* Leftover hardcoded colors from the earlier palette (Codex audit). */
+.phase55-recovery-mark { color: #ffffff; }
+.phase4-scope-picker select { border-color: var(--border-strong); }
+.phase9-activity-icon { background: var(--accent-soft); }
+:root .activity-outcome-badge.completed { background: var(--green-soft); }
+:root .ptw-week-day .ready,:root .ptw-week-card.training section span { color: var(--accent); }
+:root .ptw-week-card.training { border-top-color: var(--accent); }
+.approved-client-rail input,.connected-roster input { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 10px; }
+.approved-client-rail input::placeholder,.connected-roster input::placeholder { color: var(--text-muted); }
+/* Safari ignores min-height on native selects; draw them ourselves so Add athlete matches Chrome. */
+.athlete-profile-fields select{-webkit-appearance:none;appearance:none;padding:8px 30px 8px 10px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23697369' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;line-height:1.2}
+/* C1 roster table (Joe, Nov 16): one row per client with program, cycle week, last workout and status. */
+.roster-table-wrap{overflow-x:auto;position:relative}/* contains the absolute .roster-sr labels, so a scrolled table never widens the page */
+.roster-table{width:100%;border-collapse:collapse;font-size:13px}
+.roster-table thead th{padding:10px 14px;text-align:left;font:700 10px 'IBM Plex Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-subtle);border-bottom:1px solid var(--border)}
+.roster-table tbody td,.roster-table tbody th{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:middle;text-align:left;font-weight:400}
+.roster-table tbody tr:last-child td,.roster-table tbody tr:last-child th{border-bottom:0}
+.roster-table tbody tr:hover{background:color-mix(in srgb,var(--gold) 5%,var(--surface))}
+.roster-table .phase8-roster-row{display:flex;align-items:center;gap:10px;min-height:44px;padding:0;width:auto;background:transparent;border:0;color:var(--text);text-align:left;cursor:pointer}
+.roster-table .phase8-roster-row:hover{background:transparent;text-decoration:underline}
+.roster-table .phase8-roster-row strong{font-size:14px;white-space:nowrap}
+.roster-muted{color:var(--text-muted)}
+.roster-cycle{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;color:var(--text-muted)}
+.roster-bar{display:block;width:80px;height:6px;border-radius:3px;background:var(--surface-subtle);overflow:hidden}.roster-bar i{display:block;height:100%;background:var(--green,#2f6257)}
+.roster-last{display:grid;gap:1px;white-space:nowrap}.roster-last small{color:var(--text-muted);font-size:11px}
+.roster-table .phase9-roster-actions{justify-content:flex-end;margin:0;align-items:center}
+.roster-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.roster-more{position:relative}
+.roster-more>summary{list-style:none;display:flex;align-items:center;min-height:40px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);cursor:pointer;font-weight:600}
+.roster-more>summary::-webkit-details-marker{display:none}
+.roster-more[open]>summary{border-color:var(--accent,var(--gold))}
+.roster-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;display:grid;gap:6px;min-width:170px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);box-shadow:0 10px 24px #0002}
+.roster-menu button{justify-content:flex-start;width:100%}
+@media(max-width:760px){.roster-table thead{display:none}.roster-table,.roster-table tbody,.roster-table tr,.roster-table td,.roster-table th{display:block}.roster-table tr{padding:10px 12px;border-bottom:1px solid var(--border)}.roster-table tbody td,.roster-table tbody th{border:0;padding:3px 0}.roster-table .phase9-roster-actions{justify-content:flex-start;margin-top:6px}}
+.phase9-home-layout:has(.roster-table){grid-template-columns:minmax(0,2.5fr) minmax(250px,.8fr)}
+@media(max-width:1100px){.phase9-home-layout:has(.roster-table){grid-template-columns:minmax(0,1fr)}}
+.roster-table .phase55-avatar{display:none}
+.roster-table .phase8-status{white-space:nowrap}
+.roster-bar{width:48px}
+.roster-table tbody td,.roster-table tbody th{padding:8px 10px}.roster-table thead th{padding:10px}
+.roster-table thead th{white-space:nowrap}
+.roster-table .phase9-roster-actions .button{min-height:40px;padding:0 12px;white-space:nowrap}
+/* Review 3: whole roster row opens the client; Build cycle matches the More button. */
+.roster-table .roster-table-row{cursor:pointer}
+.roster-table .roster-build{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 14px;border-radius:6px;font-size:13px;font-weight:600;letter-spacing:.01em;box-shadow:0 1px 2px #0000001a;transition:background .12s,box-shadow .12s}
+.roster-table .roster-build span{font-size:16px;font-weight:500;line-height:1;margin-top:-1px}
+.roster-table .roster-build:hover:not(:disabled){box-shadow:0 2px 6px #00000026}
+.roster-table .roster-build:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.roster-table .roster-cycle{display:inline-grid;gap:5px}
+.roster-table .roster-bar{width:88px}
+.roster-table thead th,.roster-table tbody td,.roster-table tbody th{padding-left:12px;padding-right:12px}
+.roster-table .roster-build{padding:0 12px}
+.roster-table .roster-last{max-width:118px}.roster-table .roster-last small{white-space:normal}
+.roster-table .roster-more>summary{padding:0 10px;font-size:18px;letter-spacing:1px;min-width:40px;justify-content:center}
+/* Native <dialog> modals (ModalDialog.tsx): drop the browser's dialog box so the existing backdrop classes keep their look. Don't hide it while closed: React autoFocus runs just before showModal(). */
+dialog.native-modal{width:auto;height:auto;max-width:none;max-height:none;margin:0;border:0;color:inherit;overflow:visible}dialog.native-modal::backdrop{background:transparent}

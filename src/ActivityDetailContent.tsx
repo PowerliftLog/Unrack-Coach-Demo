@@ -22,7 +22,7 @@ function plannedSetSummary(set: CoachActivityPlannedSetV1, defaultUnit: 'lb' | '
   const load = set.load_mode === 'exact' ? `${set.exact_weight} ${set.unit_override ?? defaultUnit}`
     : set.load_mode === 'percent' ? `${set.percent}%${set.of_max_id ? ' of pinned max' : ''}${full && set.percent_basis_max_type ? ` · ${set.percent_basis_max_type.replaceAll('_', ' ')}` : ''}${full && set.resolved_max_effective_from !== null ? ` · max effective ${set.resolved_max_effective_from}` : ''}${set.resolved_weight === null ? '' : ` · resolved ${set.resolved_weight} ${set.unit_override ?? defaultUnit}`}${set.manual_override === null ? '' : ` · manual override ${set.manual_override} ${set.unit_override ?? defaultUnit}`}`
       : set.load_mode === 'rpe' ? `RPE ${set.rpe_min}${set.rpe_max === null ? '' : `–${set.rpe_max}`}`
-        : set.load_mode === 'qualitative' ? `Effort ${set.qualitative}` : set.load_mode
+        : set.load_mode === 'athlete_choice' ? 'Lifter chooses' : set.load_mode === 'qualitative' ? `Effort ${set.qualitative}` : set.load_mode
   return `${sets} ${setLabel} · ${dose} · ${load}${full ? ` · ${set.laterality.replaceAll('_', ' ')} · ${set.load_basis.replaceAll('_', ' ')}${set.rest_seconds === null ? '' : ` · ${set.rest_seconds}s rest`}` : ''}`
 }
 

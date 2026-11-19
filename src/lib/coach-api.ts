@@ -96,6 +96,11 @@ export type CoachAthleteMetricsV1 = { contract_version: 1; gym_id: string; athle
     exercises: Array<{ exercise_id: string | null; name: string
       sets: Array<{ set_log_id: string; reps: number | null; weight: number | null
         unit: 'lb' | 'kg' | null; rpe: number | null; completed: boolean }> }> }> }
+/** Completed sets with their prescription, for the builder's past-performance sidebar (newest session first). */
+export type CoachExerciseHistorySetV1 = { reps: number | null; weight: number | null; unit: 'lb' | 'kg' | null; rpe: number | null; note: string | null
+  planned_dose_mode: string | null; planned_min: number | null; planned_max: number | null; planned_weight: number | null; planned_unit: 'lb' | 'kg' | null; planned_effort: string | null }
+export type CoachExerciseHistoryV1 = { contract_version: 1; gym_id: string; athlete_id: string
+  sessions: Array<{ completed_at: string; exercises: Array<{ name: string; sets: CoachExerciseHistorySetV1[] }> }> }
 export type CoachAthleteNotesV1 = { contract_version: 1; gym_id: string; athlete_id: string; text: string; version: number; updated_at: string | null }
 export type CoachAthleteActivityPageV1 = CoachRecentActivityPageV1 & {summary:{completed:number;skipped:number;last_session:{performed_at:string;day_label:string}|null}}
 export type CoachAthleteRecentWorkoutsV1 = {
@@ -154,7 +159,8 @@ export type CreateCalendarProgramV2Result = {
   first_day_identity_token: string
   builder_version: number
 }
-export type CoachProgramCalendar = { version: 1; start_on: string; selected_weekdays: number[] }
+/** Day ordinals remain ISO weekdays; v1 starts Monday, v2 starts on the exact date. */
+export type CoachProgramCalendar = { version: 1 | 2; start_on: string; selected_weekdays: number[] }
 export type PublishProgramInput = {
   program: string
   assignment: string
@@ -198,7 +204,7 @@ export type CoachSetGroup = {
   ordinal: number
   sets: number | null
   reps: number | null
-  load_kind: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'tbd'
+  load_kind: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'athlete_choice' | 'tbd'
   load_value: number | 'L' | 'M' | 'MH' | 'H' | null
   unit_override: 'lb' | 'kg' | null
   effective_unit: 'lb' | 'kg' | null
@@ -647,7 +653,7 @@ export type CoachActivityPlannedSetV1 = {
   revision_set_group_id: Phase4Uuid; ordinal: number; sets_mode: 'exact' | 'range'; sets_min: number; sets_max: number | null
   dose_mode: 'reps' | 'time' | 'steps' | 'distance' | 'amrap'; reps_mode: 'exact' | 'range' | 'athlete_choice' | null
   dose_min: number | null; dose_max: number | null; distance_unit: 'm' | 'km' | 'ft' | 'mi' | null
-  laterality: 'bilateral' | 'each_side' | 'alternating'; load_mode: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'tbd'
+  laterality: 'bilateral' | 'each_side' | 'alternating'; load_mode: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'athlete_choice' | 'tbd'
   load_basis: 'total' | 'added_to_bodyweight' | 'per_hand'; exact_weight: number | null; percent: number | null
   percent_basis_exercise_id: Phase4Uuid | null; percent_basis_max_type: 'tested_1rm' | 'training_max' | null
   manual_override: number | null; rpe_min: number | null; rpe_max: number | null; qualitative: 'L' | 'M' | 'MH' | 'H' | null
@@ -789,7 +795,7 @@ export type RichSetFields = {
   ordinal: number; sets_mode: 'exact' | 'range'; sets_min: number; sets_max: number | null
   dose_mode: 'reps' | 'time' | 'steps' | 'distance' | 'amrap'; reps_mode: 'exact' | 'range' | 'athlete_choice' | null
   dose_min: number | null; dose_max: number | null; distance_unit: 'm' | 'km' | 'ft' | 'mi' | null
-  laterality: 'bilateral' | 'each_side' | 'alternating'; load_mode: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'tbd'
+  laterality: 'bilateral' | 'each_side' | 'alternating'; load_mode: 'exact' | 'percent' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'athlete_choice' | 'tbd'
   load_basis: 'total' | 'added_to_bodyweight' | 'per_hand'; exact_weight: number | null; percent: number | null
   percent_basis_exercise_id: Phase4Uuid | null; percent_basis_max_type: 'tested_1rm' | 'training_max' | null
   rpe_min: number | null; rpe_max: number | null; qualitative: 'L' | 'M' | 'MH' | 'H' | null
@@ -909,6 +915,7 @@ export interface PercentageProgrammingApi {
   setGymCompetitionExerciseV1(input: { target_gym: string; target_lift: 'squat' | 'bench' | 'deadlift'; target_exercise: string }): Promise<{ lift: 'squat' | 'bench' | 'deadlift'; exercise_id: string }>
   ensureCoachExerciseV1(input: { target_gym: string; exercise_name: string }): Promise<ExerciseOptionV1>
   getCoachAthleteMetricsV1(input: { target_gym: string; target_athlete: string }): Promise<CoachAthleteMetricsV1>
+  getCoachAthleteExerciseHistoryV1?(input: { target_gym: string; target_athlete: string }): Promise<CoachExerciseHistoryV1>
   getCoachTrainingReportV1(input: { target_gym: string; target_athlete: string; assignment_id: string }): Promise<TrainingReportV1>
   completeCoachAssignmentCycleV1(input: { target_gym: string; target_athlete: string; assignment_id: string }): Promise<CompleteCoachAssignmentCycleV1>
   previewProgramPercentV1(input: { program: string; expected_builder_version: number }): Promise<ProgramPercentPreviewV1>
@@ -1959,6 +1966,9 @@ const activityOptionalNumber = (value: unknown): value is number | null => value
 const activityOptionalInteger = (value: unknown): value is number | null => value === null || phase4Integer(value)
 const activityOptionalTimestamp = (value: unknown): value is string | null => phase4Nullable(value, phase4Timestamp)
 const activityOptionalUuid = (value: unknown): value is string | null => phase4Nullable(value, phase4Uuid)
+const choiceLoadIsEmpty = (value: UnknownRecord) => value.load_mode !== 'athlete_choice' || value.load_basis === 'total' &&
+  ['exact_weight', 'percent', 'percent_basis_exercise_id', 'percent_basis_max_type', 'manual_override', 'of_max_id', 'resolved_weight', 'resolved_max_effective_from', 'resolved_at', 'qualitative', 'unit_override', 'rpe_min', 'rpe_max'].every(key => !(key in value) || value[key] === null)
+
 function activityPlannedSet(value: unknown): value is CoachActivityPlannedSetV1 {
   if (!exactKeys(value, ['revision_set_group_id', 'ordinal', 'sets_mode', 'sets_min', 'sets_max', 'dose_mode', 'reps_mode', 'dose_min', 'dose_max', 'distance_unit', 'laterality', 'load_mode', 'load_basis', 'exact_weight', 'percent', 'percent_basis_exercise_id', 'percent_basis_max_type', 'manual_override', 'rpe_min', 'rpe_max', 'qualitative', 'unit_override', 'rest_seconds', 'note', 'of_max_id', 'resolved_weight', 'resolved_max_effective_from', 'resolved_at'])) return false
   if (!phase4Uuid(value.revision_set_group_id) || !phase4Integer(value.ordinal, 1, 1200)
@@ -1969,7 +1979,7 @@ function activityPlannedSet(value: unknown): value is CoachActivityPlannedSetV1 
     || !activityOptionalNumber(value.dose_min) || !activityOptionalNumber(value.dose_max)
     || !(value.distance_unit === null || phase4Enum(value.distance_unit, ['m', 'km', 'ft', 'mi']))
     || !phase4Enum(value.laterality, ['bilateral', 'each_side', 'alternating'])
-    || !phase4Enum(value.load_mode, ['exact', 'percent', 'rpe', 'qualitative', 'bodyweight', 'none', 'tbd'])
+    || !phase4Enum(value.load_mode, ['exact', 'percent', 'rpe', 'qualitative', 'bodyweight', 'none', 'athlete_choice', 'tbd'])
     || !phase4Enum(value.load_basis, ['total', 'added_to_bodyweight', 'per_hand'])
     || ![value.exact_weight, value.percent, value.manual_override, value.rpe_min, value.rpe_max, value.resolved_weight].every(activityOptionalNumber)
     || !activityOptionalUuid(value.percent_basis_exercise_id) || !(value.percent_basis_max_type === null || phase4Enum(value.percent_basis_max_type, ['tested_1rm', 'training_max']))
@@ -1978,6 +1988,7 @@ function activityPlannedSet(value: unknown): value is CoachActivityPlannedSetV1 
     || !activityOptionalInteger(value.rest_seconds) || !phase4NullableText(value.note, 500)
     || !activityOptionalUuid(value.of_max_id) || !phase4Nullable(value.resolved_max_effective_from, phase4Date)
     || !activityOptionalTimestamp(value.resolved_at)) return false
+  if (!choiceLoadIsEmpty(value)) return false
   return value.dose_mode === 'reps' ? value.reps_mode !== null : value.reps_mode === null
 }
 function activityPlannedExercise(value: unknown): value is CoachActivityPlannedExerciseV1 {
@@ -2073,11 +2084,31 @@ function phase6ProgramArchive(value: unknown, input: { program: string; expected
 }
 
 function phase4Calendar(value: unknown): value is CoachProgramCalendar {
-  if (!exactKeys(value, ['version', 'start_on', 'selected_weekdays']) || value.version !== 1
-    || !phase4Date(value.start_on)
+  if (!exactKeys(value, ['version', 'start_on', 'selected_weekdays']) || (value.version !== 1 && value.version !== 2)
+    || !phase4Date(value.start_on) || value.start_on.startsWith('0000-')
     || !phase4Array(value.selected_weekdays, 7, (day): day is number => phase4Integer(day, 1, 7), 1)) return false
   return uniqueStrings(value.selected_weekdays.map(String))
-    && new Date(`${value.start_on}T00:00:00.000Z`).getUTCDay() === 1
+    && (value.version === 2 || new Date(`${value.start_on}T00:00:00.000Z`).getUTCDay() === 1)
+}
+
+function phase4CalendarRange(calendar: CoachProgramCalendar, weekCount: number): boolean {
+  const end = new Date(`${calendar.start_on}T00:00:00.000Z`)
+  end.setUTCDate(end.getUTCDate() + weekCount * 7 - 1)
+  return Number.isFinite(end.getTime()) && phase4Date(end.toISOString().slice(0, 10))
+}
+
+function phase4CalendarSummaryDates(calendar: CoachProgramCalendar, weeks: CoachAssignmentWeekSummaryV4[]): boolean {
+  // V1 retains its historical independent date-field validation. V2 binds every
+  // summary (including unscheduled days) to its exact-start week and ISO weekday.
+  if (calendar.version === 1) return true
+  const start = new Date(`${calendar.start_on}T00:00:00.000Z`)
+  const firstWeekday = start.getUTCDay() || 7
+  return weeks.every(week => uniqueBy(week.days, day => String(day.day_ordinal))
+    && week.days.every(day => {
+      const expected = new Date(start)
+      expected.setUTCDate(expected.getUTCDate() + (week.week_ordinal - 1) * 7 + (day.day_ordinal - firstWeekday + 7) % 7)
+      return day.planned_date === expected.toISOString().slice(0, 10)
+    }))
 }
 
 function phase4PendingUndo(value: unknown): value is CoachPendingUndoV4 {
@@ -2131,7 +2162,9 @@ function phase4Detail(value: unknown, assignment: Phase4Uuid): value is CoachAss
     && typeof value.phase4_editable === 'boolean'
     && phase4Nullable(value.publish_boundary, phase4PublishBoundary) && phase4Calendar(value.calendar)
     && phase4Authoring(value.authoring) && phase4Array(value.weeks, 12, phase4WeekSummary, 1))) return false
-  return value.weeks.every((week, index) => week.week_ordinal === index + 1)
+  return phase4CalendarRange(value.calendar, value.weeks.length)
+    && value.weeks.every((week, index) => week.week_ordinal === index + 1)
+    && phase4CalendarSummaryDates(value.calendar, value.weeks)
     && (value.authoring.readiness !== 'ready' || value.authoring.ready_builder_version === value.builder_version)
     && (value.authoring.pending_undo === null || value.authoring.pending_undo.assignment_id === value.assignment_id)
 }
@@ -2167,7 +2200,9 @@ function phase5Detail(value: unknown, assignment: Phase4Uuid): value is CoachAss
     && typeof value.phase4_editable === 'boolean'
     && phase4Nullable(value.publish_boundary, phase4PublishBoundary) && phase4Calendar(value.calendar)
     && phase4Authoring(value.authoring) && phase4Array(value.weeks, 12, phase5WeekSummary, 1))) return false
-  return value.weeks.every((week, index) => week.week_ordinal === index + 1)
+  return phase4CalendarRange(value.calendar, value.weeks.length)
+    && value.weeks.every((week, index) => week.week_ordinal === index + 1)
+    && phase4CalendarSummaryDates(value.calendar, value.weeks)
     && (value.authoring.readiness !== 'ready' || value.authoring.ready_builder_version === value.builder_version)
     && (value.authoring.pending_undo === null || value.authoring.pending_undo.assignment_id === value.assignment_id)
 }
@@ -2379,7 +2414,7 @@ function richReadSet(value: unknown, template: boolean): value is RichProgramSet
     || !richNullableNumber(value.dose_min) || !richNullableNumber(value.dose_max)
     || !(value.distance_unit === null || phase4Enum(value.distance_unit, ['m', 'km', 'ft', 'mi']))
     || !phase4Enum(value.laterality, ['bilateral', 'each_side', 'alternating'])
-    || !phase4Enum(value.load_mode, ['exact', 'percent', 'rpe', 'qualitative', 'bodyweight', 'none', 'tbd'])
+    || !phase4Enum(value.load_mode, ['exact', 'percent', 'rpe', 'qualitative', 'bodyweight', 'none', 'athlete_choice', 'tbd'])
     || !phase4Enum(value.load_basis, ['total', 'added_to_bodyweight', 'per_hand'])
     || ![value.exact_weight, value.percent, value.rpe_min, value.rpe_max, value.rest_seconds].every(richNullableNumber)
     || !richId(value.percent_basis_exercise_id)
@@ -2387,6 +2422,7 @@ function richReadSet(value: unknown, template: boolean): value is RichProgramSet
     || !(value.qualitative === null || phase4Enum(value.qualitative, ['L', 'M', 'MH', 'H']))
     || !(value.unit_override === null || phase4Enum(value.unit_override, ['lb', 'kg']))
     || !phase4NullableAuthoredText(value.note, 500)) return false
+  if (!choiceLoadIsEmpty(value)) return false
   if (value.rpe_min !== null && !phase4Decimal(value.rpe_min, 1, 10, 1)) return false
   if (value.rpe_max !== null && (value.rpe_min === null || !phase4Decimal(value.rpe_max, Number(value.rpe_min), 10, 1))) return false
   if (value.load_mode === 'rpe' && value.rpe_min === null) return false
@@ -4114,6 +4150,20 @@ const phase55CalendarCreate = (value: unknown, input: CreateCalendarProgramInput
   }
   const p36Number = (value: unknown): value is number => typeof value === 'number'
     && Number.isFinite(value) && value >= 0
+  const historyNumber = (value: unknown): value is number | null => value === null || p36Number(value)
+  const historyText = (value: unknown, max: number): value is string | null => value === null || typeof value === 'string' && value.length <= max
+  const exerciseHistory = (value: unknown, gym: string, athlete: string): value is CoachExerciseHistoryV1 =>
+    exactKeys(value, ['contract_version', 'gym_id', 'athlete_id', 'sessions'])
+    && value.contract_version === 1 && value.gym_id === gym && value.athlete_id === athlete
+    && phase4Array(value.sessions, 40, (session): session is Record<string, unknown> => exactKeys(session, ['completed_at', 'exercises'])
+      && phase4Timestamp(session.completed_at)
+      && phase4Array(session.exercises, 30, (exercise): exercise is Record<string, unknown> => exactKeys(exercise, ['name', 'sets'])
+        && typeof exercise.name === 'string' && exercise.name.length <= 200
+        && phase4Array(exercise.sets, 20, (set): set is Record<string, unknown> => exactKeys(set, ['reps', 'weight', 'unit', 'rpe', 'note',
+          'planned_dose_mode', 'planned_min', 'planned_max', 'planned_weight', 'planned_unit', 'planned_effort'])
+          && historyNumber(set.reps) && historyNumber(set.weight) && phase4Nullable(set.unit, profileUnit) && historyNumber(set.rpe)
+          && historyText(set.note, 280) && historyText(set.planned_dose_mode, 40) && historyNumber(set.planned_min) && historyNumber(set.planned_max)
+          && historyNumber(set.planned_weight) && phase4Nullable(set.planned_unit, profileUnit) && historyText(set.planned_effort, 8))))
   const p36Metrics = (value: unknown, gym: string, athlete: string): value is CoachAthleteMetricsV1 =>
     exactKeys(value, ['contract_version', 'gym_id', 'athlete_id', 'tracking_version',
       'tracked_lifts', 'recent_sessions'])
@@ -4284,6 +4334,7 @@ const phase55CalendarCreate = (value: unknown, input: CreateCalendarProgramInput
     setCoachTrackingV1: (input: { request_id: string; target_gym: string; target_athlete: string; exercise_id: string; required: boolean; expected_version: number }) => post<AthleteTrackingV1>('/api/save-coach-athlete-tracking-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, decode: p36Tracking, trustedErrors: phase55DashboardErrors }),
     setGymCompetitionExerciseV1: (input: { target_gym: string; target_lift: 'squat' | 'bench' | 'deadlift'; target_exercise: string }) => post<{ lift: 'squat' | 'bench' | 'deadlift'; exercise_id: string }>('/api/set-gym-competition-exercise-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, decode: (value): value is { lift: 'squat' | 'bench' | 'deadlift'; exercise_id: string } => exactKeys(value, ['lift', 'exercise_id']) && value.lift === input.target_lift && value.exercise_id === input.target_exercise, trustedErrors: phase55DashboardErrors }),
     ensureCoachExerciseV1: (input: { target_gym: string; exercise_name: string }) => post<ExerciseOptionV1>('/api/ensure-coach-exercise-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, decode: (value): value is ExerciseOptionV1 => exactKeys(value, ['exercise_id', 'name', 'default_basis_exercise_id']) && phase4Uuid(value.exercise_id) && phase4NonemptyText(value.name, 120) && phase4Nullable(value.default_basis_exercise_id, phase4Uuid), trustedErrors: phase55DashboardErrors }),
+    getCoachAthleteExerciseHistoryV1: (input: { target_gym: string; target_athlete: string }) => post<CoachExerciseHistoryV1>('/api/coach-athlete-exercise-history-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4DetailMaxBytes, decode: (value): value is CoachExerciseHistoryV1 => exerciseHistory(value, input.target_gym, input.target_athlete), trustedErrors: phase55DashboardErrors }),
     getCoachAthleteMetricsV1: (input: { target_gym: string; target_athlete: string }) => post<CoachAthleteMetricsV1>('/api/coach-athlete-metrics-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4DetailMaxBytes, decode: (value): value is CoachAthleteMetricsV1 => p36Metrics(value, input.target_gym, input.target_athlete), trustedErrors: phase55DashboardErrors }),
     getCoachTrainingReportV1: (input: { target_gym: string; target_athlete: string; assignment_id: string }) => post<TrainingReportV1>('/api/coach-training-report-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, decode: (value): value is TrainingReportV1 => p36Report(value, input.assignment_id), trustedErrors: phase55DashboardErrors }),
     completeCoachAssignmentCycleV1: (input: { target_gym: string; target_athlete: string; assignment_id: string }) => post<CompleteCoachAssignmentCycleV1>('/api/complete-coach-assignment-cycle-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, decode: (value): value is CompleteCoachAssignmentCycleV1 => cycleClosure(value, input.assignment_id), trustedErrors: cycleClosureErrors }),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ModalDialog } from './ModalDialog'
 import { CoachApiError, type October18CoachApi, type CoachClientRemovalContextV1, type CoachClientRemovalInputV1, type CoachRemovedClientsV1 } from './lib/coach-api'
 
 const failure = (cause: unknown) => cause instanceof CoachApiError && (cause.status === 404 || cause.code === 'feature_unavailable') ? 'Client removal is unavailable while the workspace update finishes. Retry shortly.' : cause instanceof Error ? cause.message : 'The client change could not be confirmed. Retry the same request.'
@@ -6,9 +7,8 @@ export function CoachClientRemoval({ api, gym, client, onClose, onChanged }: { a
   const [items, setItems] = useState<CoachRemovedClientsV1['items']>([]), [cursor, setCursor] = useState<string | null>(null)
   const [selected, setSelected] = useState(client), [context, setContext] = useState<CoachClientRemovalContextV1 | null>(null)
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
-  const dialog = useRef<HTMLDialogElement>(null), epoch = useRef(0), inFlight = useRef(false), attempt = useRef<CoachClientRemovalInputV1 | null>(null)
-  const opener = useRef(document.activeElement as HTMLElement | null)
-  useEffect(() => { if (dialog.current?.showModal) dialog.current.showModal(); else dialog.current?.setAttribute('open', ''); return () => { ++epoch.current; opener.current?.isConnected && opener.current.focus() } }, [])
+  const epoch = useRef(0), inFlight = useRef(false), attempt = useRef<CoachClientRemovalInputV1 | null>(null)
+  useEffect(() => () => { ++epoch.current }, [])
   const read = async (more = false) => {
     const token = ++epoch.current; setLoading(true); setError(null); attempt.current = null
     try {
@@ -40,10 +40,10 @@ export function CoachClientRemoval({ api, gym, client, onClose, onChanged }: { a
       if (cause instanceof CoachApiError && cause.status !== null && cause.status >= 400 && cause.status < 500 && ![408, 429].includes(cause.status)) { attempt.current = null; setContext(null) }
     } finally { inFlight.current = false; if (token === epoch.current) setBusy(false) }
   }
-  return <dialog ref={dialog} className="dialog oct18-dialog" aria-labelledby="client-removal-title" onCancel={event => { event.preventDefault(); if (!busy && !attempt.current) onClose() }}>
+  return <ModalDialog box className="dialog oct18-dialog" labelledBy="client-removal-title" onEscape={() => { if (!busy && !attempt.current) onClose() }}>
     <h2 id="client-removal-title">{selected ? context?.removed ? 'Restore client?' : 'Remove client?' : 'Removed clients'}</h2>
     {selected ? <><p><strong>{selected.name}</strong></p>{context?.removed ? <p>Restore this client to your roster. Saved programming and history remain available. Assign a new plan and connect the app with a new invite; previous connections and plans stay ended.</p> : <p>Remove this client from the roster and end their current plans and app connections. Saved programming and athlete history are retained. You can restore the client later from Removed clients.</p>}</> : <><p>Restore a client to the roster without reviving old app credentials or assignments.</p>{items.map(item => <article className="oct18-review-row" key={item.athlete_id}><strong>{item.name}</strong><button className="button outline" disabled={busy || loading} onClick={() => setSelected({ athlete: item.athlete_id, name: item.name })}>Restore client</button></article>)}{!loading && !error && !items.length && <p>No removed clients.</p>}{cursor && items.length < 500 && <button className="button outline" disabled={loading} onClick={() => void read(true)}>Load more removed clients</button>}</>}
     {loading && <p role="status">Loading current membership…</p>}{error && <p role="alert" className="workspace-error">{error}</p>}
     <div className="dialog-actions"><button autoFocus className="button outline" disabled={busy || !!attempt.current} onClick={onClose}>Cancel</button>{error && !attempt.current && <button className="button outline" disabled={busy || loading} onClick={() => void read()}>Refresh and review</button>}{selected && context && <button className="button primary" disabled={busy || loading} onClick={() => void apply()}>{busy ? 'Saving…' : attempt.current ? 'Retry same request' : context.removed ? 'Restore client' : 'Remove client'}</button>}</div>
-  </dialog>
+  </ModalDialog>
 }
