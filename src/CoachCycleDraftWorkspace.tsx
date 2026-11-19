@@ -15,7 +15,7 @@ import { readBrowserCoachCyclePendingV2Scope } from './lib/coach-cycle-pending-v
 import type { createCoachCyclePreviewV2Api } from './lib/coach-cycle-preview-v2-api'
 import { CoachCycleDraftError, isCoachCycleDraftSource, type createCoachCycleDraftApi, type CoachCycleDraftRecord, type CoachCycleDraftSaveInput, type CoachCycleDraftSummary } from './lib/coach-cycle-draft-api'
 import { copyCoachCycleTemplate, extractCoachCycleTemplate } from './lib/coach-cycle-template'
-import { CoachCycleLibrary, nextMondayIso } from './CoachCycleLibrary'
+import { CoachCycleLibrary, nextMondayIso, type ErasedAthleteDraftApi } from './CoachCycleLibrary'
 import { CoachCycleTemplateError, type createCoachCycleTemplateApi, type CoachCycleTemplateCreateInput, type CoachCycleTemplateDeleteInput, type CoachCycleTemplateSummary } from './lib/coach-cycle-template-api'
 import { CoachCyclePublishError, type createCoachCyclePublishApi, type CoachCyclePublishPreview, type CoachCyclePublishSource } from './lib/coach-cycle-publish-api'
 import ExercisePastPerformance, { type AthleteHistoryState } from './ExercisePastPerformance'
@@ -54,6 +54,7 @@ export type CoachCycleDraftWorkspaceProps = {
   openProgram?: { name: string; startOn?: string | null } | null
   /** Clients whose saved cycles appear in the Library (copy any cycle to this athlete). */
   libraryClients?: { id: string; name: string }[]
+  erasedAthleteDraftApi?: ErasedAthleteDraftApi
   /** Athlete's recent sessions for the builder's past-performance reference (read-only). */
   athleteHistory?: (input: { target_gym: string; target_athlete: string }) => Promise<CoachExerciseHistoryV1>
   onBack(): void
@@ -99,7 +100,7 @@ export function matchActiveSheet(drafts: { id: string; intake: { name: string; s
 export default function CoachCycleDraftWorkspace(props: CoachCycleDraftWorkspaceProps) {
   return <DraftWorkspace key={`${props.ownerSubject}:${props.gym}:${props.athlete}`} {...props} />
 }
-function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, draftNames = false, autoOpen = false, openProgram = null, libraryClients, onBack }: CoachCycleDraftWorkspaceProps) {
+function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, draftNames = false, autoOpen = false, openProgram = null, libraryClients, erasedAthleteDraftApi, onBack }: CoachCycleDraftWorkspaceProps) {
   const [historyState, setHistoryState] = useState<AthleteHistoryState>({ status: 'loading' })
   useEffect(() => {
     if (!athleteHistory) return
@@ -616,7 +617,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       <aside ref={publishSection} className={drawer || betaPublicationPending || Boolean(betaRecoveryError) ? 'ccd-publish ccd-drawer open' : 'ccd-publish ccd-drawer'} aria-label="Publish details" inert={!(drawer || betaPublicationPending || Boolean(betaRecoveryError))}>
         <div className="ccd-drawer-head"><h2>Publish details</h2><button onClick={() => setDrawer(false)}>Back to sheet</button></div>{betaReview}</aside></>}
     {library && libraryClients && <><div className="ccd-scrim open" onClick={() => setLibrary(false)} />
-      <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} gym={gym} clients={libraryClients} targetName={athleteName} onUse={copyFromLibrary} onClose={() => setLibrary(false)} /></aside></>}
+      <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} erasedApi={erasedAthleteDraftApi} gym={gym} clients={libraryClients} targetName={athleteName} onUse={copyFromLibrary} onClose={() => setLibrary(false)} /></aside></>}
     {opened && <div className="ccd-danger-zone"><button className="ccd-quiet ccd-danger" disabled={busy || opened.revision < 1 || hasPending || blocked || Boolean(publicationRecovery) || Boolean(publicationRecoveryError) || betaPublicationPending || Boolean(betaRecoveryError)} onClick={() => void remove()}>Delete private draft</button><span>{opened.revision ? `Saved revision ${opened.revision}` : 'Not saved yet'}</span></div>}
     {templateApi && <details className="ccd-library ccd-templates"><summary>Reusable cycle templates</summary><section aria-label="Reusable cycle templates">
       <h2>Reusable cycle templates</h2><p>Your private templates are available across clients in this gym. Check reusable instructions for client-specific information.</p>

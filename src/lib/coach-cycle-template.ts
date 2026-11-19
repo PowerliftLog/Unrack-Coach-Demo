@@ -1,5 +1,5 @@
 import type { Cell, Sheet } from '@fortune-sheet/core'
-import { generate, validStructure } from '../review/CoachSheetEditorProof'
+import { generate, nameStarts, validStructure } from '../review/CoachSheetEditorProof'
 import { isCoachCycleDraftSource, type CoachCycleDraftSource } from './coach-cycle-draft-api'
 
 export type CoachCycleTemplate = {
@@ -7,7 +7,9 @@ export type CoachCycleTemplate = {
   name: string
   weeks: number
   unit: 'lb' | 'kg'
-  days: { name: string; exercises: { name: string; weeks: { prescription: string; instructions: string }[] }[] }[]
+  // `exercise` is set only on a week (2+) where the block switches exercise ("Different exercise by week"): the
+  // draft's `switches`. It names the exercise from that week until the next switch.
+  days: { name: string; exercises: { name: string; weeks: { prescription: string; instructions: string; exercise?: string }[] }[] }[]
 }
 export type CoachCycleTemplateTarget = {
   athleteId: string
@@ -73,7 +75,9 @@ function raw(cell: Cell | null | undefined): string {
 /** Copy literal authoring cells only. Client/date/IDs/review and Fortune metadata never enter a template. */
 export function extractCoachCycleTemplate(source: CoachCycleDraftSource): CoachCycleTemplate {
   source = jsonSnapshot(source)
-  if (!isCoachCycleDraftSource(source) || !validStructure(source.intake, source.counts, source.sheets as Sheet[])) invalid()
+  if (!isCoachCycleDraftSource(source)) invalid()
+  const starts = nameStarts(source.intake, source.blockIds, source.switches)
+  if (!validStructure(source.intake, source.counts, source.sheets as Sheet[], starts)) invalid()
   const sheet = source.sheets[0] as Sheet, cells = matrix(sheet)
   // Check every occupied cell, including structural cells, for unsupported computed content.
   for (const row of cells) for (const cell of row) if (cell) raw(cell)
@@ -83,8 +87,10 @@ export function extractCoachCycleTemplate(source: CoachCycleDraftSource): CoachC
       name: day,
       exercises: Array.from({ length: source.counts[day] }, (_, index) => {
         const row = 2 + index * (source.intake.weeks + 1), column = dayIndex * 5
+        const runs = starts[day][index]
         return { name: raw(cells[row]?.[column + 1]), weeks: Array.from({ length: source.intake.weeks }, (_, week) => ({
           prescription: raw(cells[row + week]?.[column + 2]), instructions: raw(cells[row + week]?.[column + 3]),
+          ...(week && runs.includes(week + 1) ? { exercise: raw(cells[row + week]?.[column + 1]) } : {}),
         })) }
       }),
     })),
@@ -104,8 +110,9 @@ export function isCoachCycleTemplate(value: unknown): value is CoachCycleTemplat
       || !Array.isArray(day.exercises) || day.exercises.length < 1 || day.exercises.length > 20) return false
     seen.add(day.name)
     return day.exercises.every(exercise => object(exercise) && exact(exercise, ['name', 'weeks']) && typeof exercise.name === 'string'
-      && Array.isArray(exercise.weeks) && exercise.weeks.length === value.weeks && exercise.weeks.every(week => object(week)
-        && exact(week, ['prescription', 'instructions']) && typeof week.prescription === 'string' && typeof week.instructions === 'string'))
+      && Array.isArray(exercise.weeks) && exercise.weeks.length === value.weeks && exercise.weeks.every((week, index) => object(week)
+        && (exact(week, ['prescription', 'instructions']) || index > 0 && exact(week, ['prescription', 'instructions', 'exercise']) && typeof week.exercise === 'string')
+        && typeof week.prescription === 'string' && typeof week.instructions === 'string'))
   })
 }
 
@@ -121,15 +128,23 @@ export function copyCoachCycleTemplate(template: CoachCycleTemplate, target: Coa
   const intake = { client: target.athleteId, name: target.name ?? template.name, weeks: template.weeks, days: template.days.map(day => day.name), start: target.start, unit: target.unit }
   const counts = Object.fromEntries(template.days.map(day => [day.name, day.exercises.length]))
   const blockIds = Object.fromEntries(template.days.map(day => [day.name, day.exercises.map(() => fresh())]))
-  const sheets = generate(intake, counts)
+  const switches = Object.fromEntries(template.days.flatMap((day, dayIndex) => day.exercises.flatMap((exercise, index) => {
+    const weeks = exercise.weeks.flatMap((week, weekIndex) => week.exercise !== undefined ? [weekIndex + 1] : [])
+    return weeks.length ? [[blockIds[day.name][index], weeks]] : []
+  })))
+  const starts = nameStarts(intake, blockIds, switches)
+  const sheets = generate(intake, counts, undefined, undefined, starts)
   const cells = new Map(sheets[0].celldata!.map(cell => [`${cell.r}:${cell.c}`, cell]))
   const write = (row: number, column: number, text: string) => { const cell = cells.get(`${row}:${column}`)!; cell.v = { ...cell.v!, v: text, m: text } }
   template.days.forEach((day, dayIndex) => day.exercises.forEach((exercise, index) => {
     const row = 2 + index * (template.weeks + 1), column = dayIndex * 5
     write(row, column + 1, exercise.name)
-    exercise.weeks.forEach((week, weekIndex) => { write(row + weekIndex, column + 2, week.prescription); write(row + weekIndex, column + 3, week.instructions) })
+    exercise.weeks.forEach((week, weekIndex) => {
+      write(row + weekIndex, column + 2, week.prescription); write(row + weekIndex, column + 3, week.instructions)
+      if (week.exercise !== undefined) write(row + weekIndex, column + 1, week.exercise)
+    })
   }))
-  const source: CoachCycleDraftSource = jsonSnapshot({ format: 'unrack-generated-cycle-v1', intake, counts, blockIds, sheets })
-  if (!isCoachCycleDraftSource(source) || !validStructure(intake, counts, sheets)) invalid()
+  const source: CoachCycleDraftSource = jsonSnapshot({ format: 'unrack-generated-cycle-v1', intake, counts, blockIds, sheets, ...(Object.keys(switches).length ? { switches } : {}) })
+  if (!isCoachCycleDraftSource(source) || !validStructure(intake, counts, sheets, starts)) invalid()
   return { draftId, athleteId: target.athleteId, source, review: null, requiresReview: true, unitChanged: template.unit !== target.unit }
 }

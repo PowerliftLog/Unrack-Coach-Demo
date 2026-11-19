@@ -1,5 +1,6 @@
 import type { AthleteScheduleWorkout } from '../AthleteSchedulePanel'
 import type { AppMode } from './config'
+import { COACH_CYCLE_DRAFT_READ_MAX_BYTES, isCoachCycleDraftSource, isCoachCycleDraftWeekday, type CoachCycleDraftSource } from './coach-cycle-draft-api'
 
 export type BootstrapOwnerGymInput = { gym_name: string; coach_display_name: string }
 export type BootstrapOwnerGymResult = { gym_id: string; coach_id: string }
@@ -1362,6 +1363,15 @@ export type CoachTemplateReadinessV1 = { contract_version: 1; program_id: string
 export type CoachClientRemovalContextV1 = { contract_version: 1; athlete_id: string; membership_state: 'active' | 'former'; pairing_epoch: string; removed: boolean }
 export type CoachClientRemovalInputV1 = { request_id: string; gym: string; athlete: string; expected_membership_state: 'active' | 'former'; expected_pairing_epoch: string; removed: boolean }
 export type CoachRemovedClientsV1 = { contract_version: 1; items: Array<{ athlete_id: string; name: string; membership_state: 'former'; pairing_epoch: string; removed_at: string | null }>; next_cursor: string | null }
+export type CoachErasedAthleteDraftSummaryV1 = {
+  draft_id: string; updated_at: string; name: string; weeks: number | null; days: string[]; unit: 'lb' | 'kg' | null
+}
+export type CoachErasedAthleteDraftsV1 = { contract_version: 1; items: CoachErasedAthleteDraftSummaryV1[] }
+export type CoachErasedAthleteDraftV1 = {
+  contract_version: 1; draft_id: string; updated_at: string; revision: number; source: CoachCycleDraftSource
+}
+export type CoachEraseAthleteInputV1 = { request_id: string; gym: string; athlete: string; confirm_name: string }
+export type CoachEraseAthleteResultV1 = { state: 'erased'; replayed: boolean; [key: string]: 'erased' | boolean | number }
 export type CoachPersonalTrackingRequestV2 = { request_id: string; athlete_id: string; athlete_name: string; assignment_id: string; logical_exercise_id: string; exercise_name: string; status: 'pending' | 'resolved' | 'dismissed'; exercise_id: string | null; review_version: number; created_at: string }
 export type CoachPersonalTrackingRequestsV2 = { contract_version: 2; items: CoachPersonalTrackingRequestV2[]; next_cursor: string | null }
 export type CoachPersonalTrackingReviewInputV2 = { request_id: string; gym: string; mapping_request_id: string; expected_review_version: number; expected_tracking_version: number; action: 'resolve' | 'dismiss'; exercise_id: string | null }
@@ -1379,6 +1389,9 @@ export interface October18CoachApi {
   getCoachClientRemovalContextV1(input: { gym: string; athlete: string }): Promise<CoachClientRemovalContextV1>
   setCoachClientRemovedV1(input: CoachClientRemovalInputV1): Promise<CoachClientRemovalContextV1>
   getCoachRemovedClientsV1(input: { gym: string; cursor: string | null; page_size: number }): Promise<CoachRemovedClientsV1>
+  getCoachErasedAthleteDraftsV1(input: { gym: string; page_limit: number }): Promise<CoachErasedAthleteDraftsV1>
+  readCoachErasedAthleteDraftV1(input: { gym: string; draft: string }): Promise<CoachErasedAthleteDraftV1>
+  eraseCoachAthleteV1(input: CoachEraseAthleteInputV1): Promise<CoachEraseAthleteResultV1>
   getCoachPersonalTrackingRequestsV2(input: { gym: string; athlete: string | null; cursor: string | null; page_size: number }): Promise<CoachPersonalTrackingRequestsV2>
   reviewCoachPersonalTrackingRequestV2(input: CoachPersonalTrackingReviewInputV2): Promise<CoachPersonalTrackingReviewV2>
 }
@@ -1407,8 +1420,11 @@ export type CoachApiErrorCode = 'session_expired' | 'stale_builder_version' | 'd
   | 'profile_changed' | 'candidate_evidence_changed' | 'percentage_preview_changed'
   | 'cycle_not_active' | 'cycle_workouts_incomplete'
   | 'settings_changed' | 'feature_unavailable' | 'client_membership_changed' | 'personal_review_changed' | 'personal_row_changed' | 'personal_snapshot_changed'
+  | 'erase_confirm_required' | 'erase_refused'
 
 const coachApiErrorMessages: Record<CoachApiErrorCode, string> = {
+  erase_confirm_required: "Type the client's name exactly as it appears on the roster.",
+  erase_refused: "This athlete's data can't be deleted from Coach right now. Ask the athlete to use Delete my data in the app, or contact support.",
   feature_unavailable: 'This update is not available yet. Retry shortly; your saved data is unchanged.',
   client_membership_changed: 'This client’s membership changed. Refresh and review before trying again.',
   personal_review_changed: 'This tracking request changed. Refresh and review it again.',
@@ -3862,6 +3878,16 @@ function trustedPhase4Error(value: unknown, status: number, errors: Phase4ErrorM
 const normalizeDashboardSearch = (value: string | null) => value === null ? null : value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US') || null
 
 const oct18Errors: Phase4ErrorMap = { ...phase55DashboardErrors, 403: ['access_denied', 'feature_unavailable'], 409: ['client_membership_changed', 'personal_review_changed', 'personal_row_changed', 'personal_snapshot_changed', 'serialization_retry', 'request_id_drift', 'dashboard_read_changed'] }
+const coachErasureErrors: Phase4ErrorMap = { ...oct18Errors, 409: ['serialization_retry', 'erase_refused'], 422: ['erase_confirm_required'] }
+
+function erasedAthleteDraftSummary(value: unknown): value is CoachErasedAthleteDraftSummaryV1 {
+  return exactKeys(value, ['draft_id', 'updated_at', 'name', 'weeks', 'days', 'unit'])
+    && phase4Uuid(value.draft_id) && phase4Timestamp(value.updated_at)
+    && phase4Text(value.name, 120)
+    && (value.weeks === null || phase4Integer(value.weeks, 1, 52))
+    && phase4Array(value.days, 7, isCoachCycleDraftWeekday)
+    && phase4Nullable(value.unit, item => phase4Enum(item, ['lb', 'kg']))
+}
 
 export function createConnectedCoachApi(options: ApiOptions): ConnectedCoachApiV4 & Phase5CorrectionApi & Phase55DashboardReadsApi & Phase55AssignmentLifecycleApi & Phase55WorkoutTemplateLibraryApi & Phase6ProgramArchiveApi & Phase9ActivityApi & Phase9ProgramTemplateApi & PercentageProgrammingApi & BacklogRevisionApi & OwnerOnboardingApi & October18CoachApi {
   if (options.mode !== 'connected') throw new Error('Connected coach API cannot be created in demo mode.')
@@ -4303,6 +4329,24 @@ const phase55CalendarCreate = (value: unknown, input: CreateCalendarProgramInput
     getCoachClientRemovalContextV1: input => post<CoachClientRemovalContextV1>('/api/coach-client-removal-context-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, trustedErrors: oct18Errors, decode: (value): value is CoachClientRemovalContextV1 => oct18RemovalContext(value, input.athlete) }),
     setCoachClientRemovedV1: input => post<CoachClientRemovalContextV1>('/api/set-coach-client-removed-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, trustedErrors: oct18Errors, decode: (value): value is CoachClientRemovalContextV1 => oct18RemovalContext(value, input.athlete) && value.removed === input.removed }),
     getCoachRemovedClientsV1: input => post<CoachRemovedClientsV1>('/api/coach-removed-clients-v1', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4NavigationMaxBytes, trustedErrors: oct18Errors, decode: (value): value is CoachRemovedClientsV1 => exactKeys(value, ['contract_version', 'items', 'next_cursor']) && value.contract_version === 1 && phase4Array(value.items, Math.min(50, input.page_size), (row): row is CoachRemovedClientsV1['items'][number] => exactKeys(row, ['athlete_id', 'name', 'membership_state', 'pairing_epoch', 'removed_at']) && phase4Uuid(row.athlete_id) && phase4NonemptyText(row.name, 120) && row.membership_state === 'former' && phase4Uuid(row.pairing_epoch) && phase4Nullable(row.removed_at, phase4Timestamp)) && uniqueBy(value.items, row => row.athlete_id) && phase4Nullable(value.next_cursor, phase4Uuid) && (value.next_cursor === null || value.items.length === input.page_size && value.next_cursor === value.items.at(-1)?.athlete_id) }),
+    getCoachErasedAthleteDraftsV1: input => post<CoachErasedAthleteDraftsV1>('/api/coach-erased-athlete-drafts-v1', input, {
+      requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4NavigationMaxBytes, trustedErrors: oct18Errors,
+      decode: (value): value is CoachErasedAthleteDraftsV1 => exactKeys(value, ['contract_version', 'items'])
+        && value.contract_version === 1 && phase4Array(value.items, Math.min(100, input.page_limit), erasedAthleteDraftSummary)
+        && uniqueBy(value.items, row => row.draft_id),
+    }),
+    readCoachErasedAthleteDraftV1: input => post<CoachErasedAthleteDraftV1>('/api/coach-erased-athlete-draft-read-v1', input, {
+      requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: COACH_CYCLE_DRAFT_READ_MAX_BYTES, trustedErrors: oct18Errors,
+      decode: (value): value is CoachErasedAthleteDraftV1 => exactKeys(value, ['contract_version', 'draft_id', 'updated_at', 'revision', 'source'])
+        && value.contract_version === 1 && phase4Uuid(value.draft_id) && value.draft_id.toLowerCase() === input.draft.toLowerCase()
+        && phase4Timestamp(value.updated_at) && phase4Integer(value.revision, 1) && isCoachCycleDraftSource(value.source),
+    }),
+    eraseCoachAthleteV1: input => post<CoachEraseAthleteResultV1>('/api/coach-erase-athlete-v1', input, {
+      requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, trustedErrors: coachErasureErrors,
+      decode: (value): value is CoachEraseAthleteResultV1 => isRecord(value)
+        && Object.hasOwn(value, 'state') && value.state === 'erased' && Object.hasOwn(value, 'replayed') && typeof value.replayed === 'boolean'
+        && Object.entries(value).every(([key, count]) => key === 'state' || key === 'replayed' || phase4Integer(count)),
+    }),
     getCoachPersonalTrackingRequestsV2: input => post<CoachPersonalTrackingRequestsV2>('/api/coach-personal-tracking-requests-v2', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4NavigationMaxBytes, trustedErrors: oct18Errors, decode: (value): value is CoachPersonalTrackingRequestsV2 => exactKeys(value, ['contract_version', 'items', 'next_cursor']) && value.contract_version === 2 && phase4Array(value.items, Math.min(50, input.page_size), oct18PersonalRequest) && uniqueBy(value.items, row => row.request_id) && value.items.every(row => input.athlete === null || row.athlete_id === input.athlete) && phase4Nullable(value.next_cursor, phase4Uuid) && (value.next_cursor === null || value.items.length === input.page_size && value.next_cursor === value.items.at(-1)?.request_id) }),
     reviewCoachPersonalTrackingRequestV2: input => post<CoachPersonalTrackingReviewV2>('/api/review-coach-personal-tracking-request-v2', input, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, trustedErrors: oct18Errors, decode: (value): value is CoachPersonalTrackingReviewV2 => exactKeys(value, ['contract_version', 'request_id', 'status', 'exercise_id', 'review_version', 'tracking_version']) && value.contract_version === 2 && value.request_id === input.mapping_request_id && value.status === (input.action === 'resolve' ? 'resolved' : 'dismissed') && value.exercise_id === input.exercise_id && value.review_version === input.expected_review_version + 1 && phase4Integer(value.tracking_version, input.expected_tracking_version, Number.MAX_SAFE_INTEGER) }),
     getCoachSetupStatusV1: () => post<CoachSetupStatusV1>('/api/coach-setup-status-v1', {}, { requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase5SmallResultMaxBytes, trustedErrors: onboardingErrors,

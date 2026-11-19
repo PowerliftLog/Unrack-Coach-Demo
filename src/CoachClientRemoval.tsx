@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ModalDialog } from './ModalDialog'
-import { CoachApiError, type October18CoachApi, type CoachClientRemovalContextV1, type CoachClientRemovalInputV1, type CoachRemovedClientsV1 } from './lib/coach-api'
+import { CoachApiError, type October18CoachApi, type CoachClientRemovalContextV1, type CoachClientRemovalInputV1, type CoachErasedAthleteDraftsV1, type CoachRemovedClientsV1 } from './lib/coach-api'
 
 const failure = (cause: unknown) => cause instanceof CoachApiError && (cause.status === 404 || cause.code === 'feature_unavailable') ? 'Client removal is unavailable while the workspace update finishes. Retry shortly.' : cause instanceof Error ? cause.message : 'The client change could not be confirmed. Retry the same request.'
 export function CoachClientRemoval({ api, gym, client, onClose, onChanged }: { api: Partial<October18CoachApi>; gym: string; client: { athlete: string; name: string } | null; onClose(): void; onChanged(): void }) {
   const [items, setItems] = useState<CoachRemovedClientsV1['items']>([]), [cursor, setCursor] = useState<string | null>(null)
+  const [erasedDrafts, setErasedDrafts] = useState<CoachErasedAthleteDraftsV1['items']>([])
   const [selected, setSelected] = useState(client), [context, setContext] = useState<CoachClientRemovalContextV1 | null>(null)
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
   const epoch = useRef(0), inFlight = useRef(false), attempt = useRef<CoachClientRemovalInputV1 | null>(null)
@@ -25,6 +26,18 @@ export function CoachClientRemoval({ api, gym, client, onClose, onChanged }: { a
     } catch (cause) { if (token === epoch.current) setError(failure(cause)) } finally { if (token === epoch.current) setLoading(false) }
   }
   useEffect(() => { void read() }, [gym, selected?.athlete])
+  useEffect(() => {
+    setErasedDrafts([])
+    if (selected) return
+    let active = true
+    void (async () => {
+      try {
+        const page = await api.getCoachErasedAthleteDraftsV1?.({ gym, page_limit: 100 })
+        if (active && page) setErasedDrafts(page.items)
+      } catch { /* Removed clients remains available if this optional list fails. */ }
+    })()
+    return () => { active = false }
+  }, [api, gym, selected])
   const apply = async () => {
     if (!selected || !context || !api.setCoachClientRemovedV1 || inFlight.current) return
     const token = epoch.current
@@ -44,6 +57,14 @@ export function CoachClientRemoval({ api, gym, client, onClose, onChanged }: { a
     <h2 id="client-removal-title">{selected ? context?.removed ? 'Restore client?' : 'Remove client?' : 'Removed clients'}</h2>
     {selected ? <><p><strong>{selected.name}</strong></p>{context?.removed ? <p>Restore this client to your roster. Saved programming and history remain available. Assign a new plan and connect the app with a new invite; previous connections and plans stay ended.</p> : <p>Remove this client from the roster and end their current plans and app connections. Saved programming and athlete history are retained. You can restore the client later from Removed clients.</p>}</> : <><p>Restore a client to the roster without reviving old app credentials or assignments.</p>{items.map(item => <article className="oct18-review-row" key={item.athlete_id}><strong>{item.name}</strong><button className="button outline" disabled={busy || loading} onClick={() => setSelected({ athlete: item.athlete_id, name: item.name })}>Restore client</button></article>)}{!loading && !error && !items.length && <p>No removed clients.</p>}{cursor && items.length < 500 && <button className="button outline" disabled={loading} onClick={() => void read(true)}>Load more removed clients</button>}</>}
     {loading && <p role="status">Loading current membership…</p>}{error && <p role="alert" className="workspace-error">{error}</p>}
+    {!selected && erasedDrafts.length > 0 && <section className="oct18-erased-cycles">
+      <h3>Cycles from deleted athletes</h3>
+      <p>These athletes deleted their data, so their names are gone. The cycles you built for them are still yours. To reuse one, open the Library while building a cycle for a current client.</p>
+      {erasedDrafts.map(item => <article className="oct18-review-row" key={item.draft_id}><div>
+        <strong>{item.name || 'Untitled cycle'}</strong>
+        <small>Deleted athlete · {item.weeks !== null && `${item.weeks} ${item.weeks === 1 ? 'week' : 'weeks'} · `}saved {new Date(item.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</small>
+      </div></article>)}
+    </section>}
     <div className="dialog-actions"><button autoFocus className="button outline" disabled={busy || !!attempt.current} onClick={onClose}>Cancel</button>{error && !attempt.current && <button className="button outline" disabled={busy || loading} onClick={() => void read()}>Refresh and review</button>}{selected && context && <button className="button primary" disabled={busy || loading} onClick={() => void apply()}>{busy ? 'Saving…' : attempt.current ? 'Retry same request' : context.removed ? 'Restore client' : 'Remove client'}</button>}</div>
   </ModalDialog>
 }

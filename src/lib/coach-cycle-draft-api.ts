@@ -43,6 +43,8 @@ const uuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}
 const integer = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER): v is number => Number.isSafeInteger(v) && Number(v) >= min && Number(v) <= max
 const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).byteLength
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+export const isCoachCycleDraftWeekday = (value: unknown): value is string =>
+  typeof value === 'string' && weekdays.includes(value)
 function jsonValue(v: unknown, depth = 0): boolean {
   if (depth > 64) return false
   if (v === null || typeof v === 'string' || typeof v === 'boolean') return true
@@ -58,7 +60,7 @@ export function isCoachCycleDraftSource(v: unknown): v is CoachCycleDraftSource 
     if (!object(i) || !exact(i, ['client', 'name', 'weeks', 'days', 'start', 'unit']) || typeof i.client !== 'string'
       || typeof i.name !== 'string' || typeof i.start !== 'string' || !['lb', 'kg'].includes(String(i.unit)) || !integer(i.weeks, 1, 16)
       || !Array.isArray(i.days) || i.days.length < 1 || i.days.length > 7 || new Set(i.days).size !== i.days.length
-      || !i.days.every(day => typeof day === 'string' && weekdays.includes(day)) || !object(counts) || !object(ids)
+      || !i.days.every(isCoachCycleDraftWeekday) || !object(counts) || !object(ids)
       || !exact(counts, i.days) || !exact(ids, i.days) || !Array.isArray(v.sheets) || v.sheets.length !== 1) return false
     const seen = new Set<string>(); let maximum = 0
     for (const day of i.days as string[]) {

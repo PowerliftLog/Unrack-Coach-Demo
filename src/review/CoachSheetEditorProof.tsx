@@ -445,16 +445,40 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     const view = pendingView.current
     if (!view) return
     pendingView.current = null
-    // Two frames: the remounted engine sizes its scroll area after its first paint.
-    let second = 0
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => {
+    // The remounted engine may take several frames to size its scroll area. Wait until it
+    // can reach the saved position, then check on the next frame that the restore stuck.
+    const top = Math.round(view.top), left = Math.round(view.left)
+    const deadline = performance.now() + 3000
+    let applied = false
+    // The engine has no ready hook, so poll each frame. The coach's own wheel, click or key wins.
+    const listening = new AbortController()
+    const stop = () => { cancelAnimationFrame(frame); listening.abort() }
+    for (const name of ['wheel', 'pointerdown', 'keydown']) gridRef.current?.addEventListener(name, stop, { capture: true, passive: true, signal: listening.signal })
+    function restore() {
+      const late = performance.now() >= deadline
       try {
-        workbook.current?.scroll({ scrollTop: Math.round(view.top), scrollLeft: Math.round(view.left) })
-        // The engine redraws from its scroll handler; a programmatic scrollTop alone may not reach it.
-        gridRef.current?.querySelectorAll('.luckysheet-scrollbar-x, .luckysheet-scrollbar-y').forEach(bar => bar.dispatchEvent(new Event('scroll')))
+        const x = gridRef.current?.querySelector<HTMLElement>('.luckysheet-scrollbar-x')
+        const y = gridRef.current?.querySelector<HTMLElement>('.luckysheet-scrollbar-y')
+        if (x && y) {
+          if (applied && Math.abs(y.scrollTop - top) <= 1 && Math.abs(x.scrollLeft - left) <= 1) return stop()
+          applied = false
+          // At the deadline the sheet may simply be shorter now: go as far as it reaches.
+          if (workbook.current && (late || (top === 0 || y.scrollHeight - y.clientHeight >= top)
+            && (left === 0 || x.scrollWidth - x.clientWidth >= left))) {
+            workbook.current.scroll({ scrollTop: Math.min(top, Math.max(0, y.scrollHeight - y.clientHeight)), scrollLeft: Math.min(left, Math.max(0, x.scrollWidth - x.clientWidth)) })
+            // The engine redraws from its scroll handler; a programmatic scrollTop alone may not reach it.
+            x.dispatchEvent(new Event('scroll'))
+            y.dispatchEvent(new Event('scroll'))
+            applied = true
+            if (late) return stop()
+          }
+        }
       } catch { /* A view restore never blocks editing. */ }
-    }) })
-    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
+      if (late) return stop()
+      frame = requestAnimationFrame(restore)
+    }
+    let frame = requestAnimationFrame(restore)
+    return stop
   }, [revision])
   // Scrolling: the engine steps one row per wheel tick, moves sideways only on a trackpad and
   // traps the wheel even when the sheet has nowhere to go. Scroll by pixels instead (Shift+wheel

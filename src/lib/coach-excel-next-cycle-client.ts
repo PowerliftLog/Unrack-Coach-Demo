@@ -16,6 +16,7 @@ import {
 export class CoachExcelNextCycleError extends Error {
   constructor(readonly code: 'ambiguous' | 'network' | 'invalid' | 'session_expired' | 'access_denied' | 'unavailable' | 'retryable' | 'conflict' | 'blocked', readonly reason?: string) {
     super({ ambiguous: 'The publication outcome is unknown. Check the original request before retrying.', network: 'The server response could not be confirmed. Try again.', invalid: 'Review the saved cycle again.', session_expired: 'Sign in again before continuing.', access_denied: 'You no longer have access to this client cycle.', unavailable: 'Next-cycle publication is unavailable.', retryable: 'This request is busy. Check status or retry the same request.', conflict: 'The queued program or saved review changed. Review again before publishing.', blocked: 'This worksheet cannot be published. Check its prescriptions, start date and size.' }[code])
+    if (code === 'conflict' && reason === 'NEXT_CYCLE_OTHER_COACH_QUEUED') this.message = 'Another coach already has a program queued for this athlete. It was not replaced.'
     if (code === 'blocked' && reason === 'EXCEL_CHOICE_DEVICE_UPGRADE_REQUIRED') this.message = 'This program has weights the athlete chooses. The athlete needs to reconnect on the new athlete app before it can be sent. Send them a new Connect app link, then publish again.'
     this.name = 'CoachExcelNextCycleError'
   }

@@ -547,8 +547,15 @@ button:focus-visible, input:focus-visible, [role='tab']:focus-visible {
 .phase4-scope-picker select { border-color: var(--border-strong); }
 .phase9-activity-icon { background: var(--accent-soft); }
 :root .activity-outcome-badge.completed { background: var(--green-soft); }
-:root .ptw-week-day .ready,:root .ptw-week-card.training section span { color: var(--accent); }
-:root .ptw-week-card.training { border-top-color: var(--accent); }
+.ptw-day-tabs { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin-bottom:20px; }
+.ptw-day-tabs button { display:grid; gap:4px; min-width:0; min-height:56px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); text-align:left; }
+.ptw-day-tabs button[aria-selected=true] { border-color:var(--amber); background:var(--surface-subtle); }
+.ptw-day-tabs strong { font-size:16px; }
+.ptw-day-tabs span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:var(--text-muted); }
+@media(max-width:760px) {
+  .ptw-day-tabs { display:flex; overflow:auto; padding-bottom:4px; }
+  .ptw-day-tabs button { min-width:112px; }
+}
 .approved-client-rail input,.connected-roster input { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 10px; }
 .approved-client-rail input::placeholder,.connected-roster input::placeholder { color: var(--text-muted); }
 /* Safari ignores min-height on native selects; draw them ourselves so Add athlete matches Chrome. */
@@ -575,6 +582,12 @@ button:focus-visible, input:focus-visible, [role='tab']:focus-visible {
 .roster-more[open]>summary{border-color:var(--accent,var(--gold))}
 .roster-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;display:grid;gap:6px;min-width:170px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);box-shadow:0 10px 24px #0002}
 .roster-menu button{justify-content:flex-start;width:100%}
+.roster-menu .athlete-erasure-action { color: #a3261f; }
+.button.danger:not(:disabled) { background: #a3261f; border-color: #a3261f; color: #fff; }
+.button.danger:hover:not(:disabled), .button.danger:active:not(:disabled) { background: #84201b; border-color: #84201b; }
+.oct18-erasure-confirm { display: grid; gap: 6px; font-size: 13px; }
+.oct18-erased-cycles h3 { font-size: 15px; margin-top: 20px; }
+.oct18-erased-cycles > p { font-size: 13px; }
 @media(max-width:760px){.roster-table thead{display:none}.roster-table,.roster-table tbody,.roster-table tr,.roster-table td,.roster-table th{display:block}.roster-table tr{padding:10px 12px;border-bottom:1px solid var(--border)}.roster-table tbody td,.roster-table tbody th{border:0;padding:3px 0}.roster-table .phase9-roster-actions{justify-content:flex-start;margin-top:6px}}
 .phase9-home-layout:has(.roster-table){grid-template-columns:minmax(0,2.5fr) minmax(250px,.8fr)}
 @media(max-width:1100px){.phase9-home-layout:has(.roster-table){grid-template-columns:minmax(0,1fr)}}
