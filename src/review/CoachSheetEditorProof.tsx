@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Workbook, type WorkbookInstance } from '@fortune-sheet/react'
 import type { Cell, Sheet, Hooks } from '@fortune-sheet/core'
 import { CoachCycleInterpretationPanel } from '../CoachCycleInterpretationPanel'
@@ -6,7 +6,7 @@ import { interpretCoachSheetDraft, type CoachGeneratedSheetInterpretation } from
 import { compileCoachCycleDestination, compileCoachCycleDestinationV2, compileCoachCycleSchedule, compileCoachCycleScheduleV2, type CoachCycleDestinationIssue, type CoachCycleDestinationScheduleV2 } from '../lib/coach-cycle-destination'
 import { COACH_CYCLE_PUBLISH_LIMITS } from '../lib/coach-cycle-limits'
 import { prescriptionAdvice } from '../lib/coach-prescription-advice'
-import { percentConversionLabel, percentExerciseKey, percentLoads, type PercentMaxResolver } from '../lib/coach-percent-resolution'
+import { maxTypeLabel, percentConversionLabel, percentExerciseKey, percentLoads, rewritePercentPrescription, type PercentMax, type PercentMaxResolver } from '../lib/coach-percent-resolution'
 import type { PercentCell, PercentConversionRequest } from '../CoachConvertPercentDialog'
 import '@fortune-sheet/react/dist/index.css'
 import './coach-sheet-editor-proof.css'
@@ -90,7 +90,7 @@ function initialBlockIds(intake: Intake, counts: Record<string, number>): BlockI
 }
 const nameFill = '#f0f5f2', switchFill = '#fbf1d9'
 /** The fill each run's first name cell should have: amber only where the exercise actually changes
- * from the run before it. Same name in every week (after "Different exercise by week") stays plain;
+ * from the run before it. Same name in every week (after "Change exercise by week") stays plain;
  * amber there read as a yellow flag (Joe, Nov 18). */
 export function runFills(intake: Intake, counts: Record<string, number>, starts: NameStarts | undefined, matrix: (Cell | null)[][]): [row: number, column: number, fill: string, span: number][] {
   const fills: [number, number, string, number][] = []
@@ -255,8 +255,8 @@ export function blockAt(intake: Intake, counts: Record<string, number>, row: num
   return block < (counts[day] || 0) ? { day, block, week: Math.max(0, position - 1) } : null
 }
 
-export type SheetFlag = { row: number; column: number; kind: 'bad' | 'missing' | 'unclear' | 'yellow'; label: string; message: string; suggestion?: string; percent?: 'ready' | 'missing'; explanation?: string }
-export type SheetFlags = { flags: SheetFlag[]; emptySlots: number; other: string[]; percentCells: PercentCell[] }
+export type SheetFlag = { row: number; column: number; kind: 'bad' | 'missing' | 'unclear' | 'yellow'; label: string; message: string; suggestion?: string; percent?: 'ready' | 'missing'; explanation?: string; suggestedMax?: PercentMax }
+export type SheetFlags = { flags: SheetFlag[]; emptySlots: number; other: string[]; percentCells: PercentCell[]; hasPrescriptions: boolean }
 type CellPosition = { row: number; column: number }
 function cellIndex(address: string): CellPosition | null {
   const match = /^([A-Z]+)([1-9]\d*)$/.exec(address)
@@ -272,7 +272,7 @@ export function sheetFlags(intake: Intake, counts: Record<string, number>, block
   resolver: PercentMaxResolver
   basis: ReadonlyMap<string, string>
   locked(row: number, column: number): boolean
-}): SheetFlags {
+}, cellActions = false): SheetFlags {
   const result = interpretCoachSheetDraft({ intake, counts, blockIds, sheets: cloneSheets(sheets), ...(switches && Object.keys(switches).length ? { switches } : {}) }, { cycleId })
   const compiled = result.status === 'ready_for_review' ? compileCoachCycleDestination(result, intake) : null
   const issues = [...result.issues, ...(compiled?.issues ?? [])]
@@ -296,22 +296,31 @@ export function sheetFlags(intake: Intake, counts: Record<string, number>, block
       const label = flagLabel(intake, block, at.row, at.column, name)
       const displayName = name || `Exercise ${block.block + 1}`
       const cell = { ...at, day: day.name, exercise: displayName, week: slot.week, raw: slot.prescription.raw }
-      const max = percent.resolver.resolve(name, percent.basis.get(percentExerciseKey(name)))
+      const basisId = percent.basis.get(percentExerciseKey(name))
+      const max = percent.resolver.resolve(name, basisId)
       if (percent.locked(at.row, at.column)) {
         percentages.set(source.address, { cell: { ...cell, reason: 'workout is locked' }, flag: { ...at, label, kind: 'bad', message: 'Workout is locked.' } })
       } else if (max) {
         const loads = percentLoads(slot.prescription.groups, max, intake.unit)
         if (!loads.length) continue
-        const equation = loads.map(load => `${load.percent}% of ${max.value} ${max.unit} = ${load.weight} ${intake.unit}`).join(' · ')
+        const basis = cellActions
+          ? `${max.name} · ${max.value} ${max.unit} ${maxTypeLabel(max.max_type).replace(/^[A-Z]/, letter => letter.toLowerCase())}`
+          : `${max.value} ${max.unit}`
+        const equation = loads.map(load => `${load.percent}% of ${basis} = ${load.weight} ${intake.unit}`).join(cellActions ? '. ' : ' · ')
+        const match = max.matchedByAlias ? ` ${displayName} matched to ${max.name} automatically.` : ''
         percentages.set(source.address, { cell: { ...cell, loads }, flag: {
           ...at, label, kind: 'yellow', percent: 'ready',
           message: `${max.name} max ${max.value} ${max.unit} found. Use ${percentConversionLabel(intake.unit)} to apply.`,
-          explanation: `${equation}. Press ${percentConversionLabel(intake.unit)} to apply.`,
+          explanation: cellActions ? `${equation}.${match}` : `${equation}. Press ${percentConversionLabel(intake.unit)} to apply.`,
         } })
       } else {
+        const suggestedMax = cellActions ? percent.resolver.suggest(name, basisId) : undefined
+        const missing = `No max for ${displayName}`
         percentages.set(source.address, { cell: { ...cell, reason: 'no max found' }, flag: {
           ...at, label, kind: 'bad', percent: 'missing',
           message: "No max found. Set one in Profile → Maxes, or pick 'Based on' in the exercise card.",
+          ...(cellActions && { suggestedMax, explanation: suggestedMax
+            ? `${missing}. Use ${suggestedMax.name} · ${suggestedMax.value} ${suggestedMax.unit}?` : `${missing} yet.` }),
         } })
       }
     }
@@ -341,8 +350,10 @@ export function sheetFlags(intake: Intake, counts: Record<string, number>, block
   // accepted cells whose meaning is unclear (a bare @ 1–5). It never makes a cell publishable.
   const percentCells = [...percentages.values()].map(({ cell }) => cell)
   const percentPositions = new Set(percentCells.map(({ row, column }) => `${row}:${column}`))
+  let hasPrescriptions = false
   for (const [dayIndex, day] of intake.days.entries()) for (let block = 0; block < (counts[day] || 0); block++) for (let week = 0; week < intake.weeks; week++) {
     const row = 2 + block * (intake.weeks + 1) + week, column = dayIndex * 5 + 2, value = text(row, column)
+    if (value || matrix[row]?.[column]?.f) hasPrescriptions = true
     if (percentPositions.has(`${row}:${column}`)) continue
     const advice = value ? prescriptionAdvice(value, intake.unit) : null
     if (!advice) continue
@@ -352,7 +363,7 @@ export function sheetFlags(intake: Intake, counts: Record<string, number>, block
   }
   for (const { flag } of percentages.values()) flags.push(flag)
   flags.sort((a, b) => a.column - b.column || a.row - b.row)
-  return { flags, emptySlots: empty.size, other, percentCells }
+  return { flags, emptySlots: empty.size, other, percentCells, hasPrescriptions }
 }
 function flagLabel(intake: Intake, block: BlockSelection, row: number, column: number, name: string) {
   const first = 2 + block.block * (intake.weeks + 1)
@@ -361,6 +372,7 @@ function flagLabel(intake: Intake, block: BlockSelection, row: number, column: n
 export const flagFill = { bad: '#ffd3cc', missing: '#fff0b8', unclear: '#fff0b8', yellow: '#fff0b8' } as const
 // Drafts saved before Nov 18 can carry a flag's paint as a cell fill; it is never a real source fill.
 const flagFills = new Set<string>(Object.values(flagFill))
+const percentFill = '#ede4fa'
 function sourceFill(bg: unknown): string | undefined { return typeof bg === 'string' && !flagFills.has(bg.toLowerCase()) ? bg : undefined }
 function withoutFlagFill(value: Cell): Cell { if (sourceFill(value.bg) || value.bg == null) return value; const { bg: _flag, ...rest } = value; return rest }
 const flagTitle = { bad: "Can't read", missing: 'Empty', unclear: 'Unclear', yellow: 'Ready to convert' } as const
@@ -372,6 +384,30 @@ export function FlagExplanation({ flag, onGo }: { flag: SheetFlag; onGo(): void 
     {!flag.percent && <b>{flagTitle[flag.kind]} </b>}<button type="button" onClick={onGo}>{flag.label}</button>: {flag.explanation ?? message}
     {flag.suggestion && <> Try <code>{flag.suggestion}</code>.</>}
   </span>
+}
+
+const prescriptionExamples = <> <code>3x8 @ 225</code> · <code>3x8 @ 7</code> (RPE) · <code>3x12 each @ 5 lb</code> · <code>1x8+</code> or <code>AMRAP</code> · <code>SKIP</code> leaves a week out.</>
+
+function FlagMaxForm({ unit, onSave, onClose }: { unit: Intake['unit']; onSave(value: number): Promise<void>; onClose(): void }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  return <form className="cse-flag-actions" onSubmit={async event => {
+    event.preventDefault()
+    if (saving) return
+    const weight = new FormData(event.currentTarget).get('weight')
+    setSaving(true)
+    setError('')
+    try {
+      await onSave(Number(weight))
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Couldn’t save the max. Try again.')
+    } finally { setSaving(false) }
+  }}>
+    <label>Training max ({unit}) <input type="number" name="weight" min="0.001" max="3000" step="0.001" required disabled={saving} /></label>
+    <button type="submit" className="cse-primary" disabled={saving}>{saving ? 'Saving max…' : 'Save max'}</button>
+    {error && <span role="alert">{error}</span>}
+  </form>
 }
 
 function canonicalValue(value: unknown): string {
@@ -429,6 +465,7 @@ export type CoachSheetEditorProps = {
   exerciseReference?: (exerciseName: string) => ReactNode
   percentMaxes?: PercentMaxResolver
   onConvertPercent?: (request: PercentConversionRequest) => void
+  onSaveMax?: (exerciseId: string, value: number, unit: Intake['unit']) => Promise<void>
   /** A running program: workouts already done, by day and 1-based week. Their rows are read-only,
    * and renaming an exercise that has done weeks changes only the weeks still to come. */
   completedWorkouts?: { day: string; week: number }[]
@@ -445,7 +482,7 @@ export type CoachSheetEditorProps = {
 }
 
 export type CoachSheetActions = {
-  openSettings(): void
+  openSettings(options?: { focusName?: boolean }): void
   jumpToDay(index: number): void
   zoom(direction: -1 | 1): void
   openPastWeights(): void
@@ -471,7 +508,7 @@ export type CoachSheetToolbarState = {
   publishBlocked: boolean
 }
 
-export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, percentMaxes, onConvertPercent, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false, toolbarRef, onToolbarState, readOnly: locked = false, onBuildDraft, intakeDisabled = false }: CoachSheetEditorProps = {}) {
+export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, percentMaxes, onConvertPercent, onSaveMax, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false, toolbarRef, onToolbarState, readOnly: locked = false, onBuildDraft, intakeDisabled = false }: CoachSheetEditorProps = {}) {
   const twoScreen = layout === 'two-screen'
   const workspace = layout !== 'classic'
   const readOnly = twoScreen && locked
@@ -483,6 +520,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const [activeIntake, setActiveIntake] = useState<Intake>(previous.current?.intake || { ...sample, start: localPersistence ? sample.start : nextMondayLocal(), client: initialClientId || '' })
   const [counts, setCounts] = useState<Record<string, number>>(previous.current?.counts || initialCounts(sample))
   const [sheets, setSheets] = useState<Sheet[] | null>(previous.current?.sheets || null)
+  const liveCycleName = twoScreen && Boolean(sheets)
   const [blockIds, setBlockIds] = useState<BlockIds>(() => {
     const saved = previous.current?.blockIds
     const shape = previous.current?.intake || sample, sizes = previous.current?.counts || initialCounts(sample)
@@ -508,9 +546,31 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const [selection, setSelection] = useState<BlockSelection | null>(null)
   // The selected cell, so the toolbar can explain a flag on it (Joe, Nov 18).
   const [activeCell, setActiveCell] = useState<CellPosition | null>(null)
+  const lastCell = useRef<CellPosition | null>(null)
+  const [maxSetupCell, setMaxSetupCell] = useState<string | null>(null)
+  const [examplesOpen, setExamplesOpen] = useState(false)
+  const basisSelect = useRef<HTMLSelectElement>(null)
+  const focusBasis = useRef(false)
   // Workspace card: shows on every selection change, hides while the coach types or on ×.
   const [cardOpen, setCardOpen] = useState(false)
+  useEffect(() => {
+    if (cardOpen && focusBasis.current) {
+      focusBasis.current = false
+      basisSelect.current?.focus()
+    }
+  }, [cardOpen])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const cycleNameInput = useRef<HTMLInputElement>(null)
+  const focusNameOnOpen = useRef(false)
+  const focusCycleName = useCallback(() => {
+    cycleNameInput.current?.focus()
+    cycleNameInput.current?.select()
+  }, [])
+  useLayoutEffect(() => {
+    if (!settingsOpen || !focusNameOnOpen.current) return
+    focusNameOnOpen.current = false
+    focusCycleName()
+  }, [settingsOpen, focusCycleName])
   // Unskip restores the prescription that was in place before Skip, keyed by block id and week.
   const skippedPrescriptions = useRef<Record<string, string>>({})
   const [revision, setRevision] = useState(0)
@@ -638,7 +698,25 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     try { workbook.current?.scroll({ targetColumn: index * 5 }) } catch { /* Jumping never blocks editing. */ }
   }
   const current = useRef<Sheet[]>(cloneSheets(previous.current?.sheets || []))
-  // The engine mounts with the display layer for the shape it is showing (activeIntake/counts change only with a remount).
+  const [check, setCheck] = useState<SheetFlags>({ flags: [], emptySlots: 0, other: [], percentCells: [], hasPrescriptions: true })
+  const loadPreviews = useMemo(() => new Map(check.percentCells.flatMap(cell => 'loads' in cell
+    ? [[`${cell.row}:${cell.column}`, { raw: cell.raw, text: cell.loads.map(load => `≈ ${load.weight} ${activeIntake.unit}`).join(' · ') }] as const]
+    : [])), [check.percentCells, activeIntake.unit])
+  const displayFlags = useMemo(() => new Map(check.flags.map(flag => [
+    `${flag.row}:${flag.column}`, flag.percent === 'ready' ? percentFill : flagFill[flag.kind],
+  ])), [check.flags])
+  const annotations = useRef({ displayFlags, loadPreviews, zoom })
+  annotations.current = { displayFlags, loadPreviews, zoom }
+  const annotationsKey = useMemo(() => displayFlags.size || loadPreviews.size
+    ? JSON.stringify([[...displayFlags].sort(), [...loadPreviews].sort()])
+    : '', [displayFlags, loadPreviews])
+  const lastRepaintKey = useRef('')
+  useEffect(() => {
+    if (!twoScreen || annotationsKey === lastRepaintKey.current) return
+    lastRepaintKey.current = annotationsKey
+    window.dispatchEvent(new Event('resize'))
+  }, [twoScreen, annotationsKey])
+  // The engine mounts with the display layer for its current shape.
   const editorSheets = useMemo(() => sheets ? forEditor(sheets, zoom, activeIntake, counts, lockedCell) : [], [sheets, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
   // Row heights the engine is currently showing, so an edit that needs a taller (or shorter) row resizes only that row.
   const shownHeights = useRef<Record<string, number>>({})
@@ -672,37 +750,97 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
           return true
         },
         beforeAddSheet: () => false, beforeDeleteSheet: () => false, beforeUpdateSheetName: () => false,
+        ...(twoScreen && {
+          // FortuneSheet records formatting API calls in Undo. Paint directly on the canvas so
+          // clearing a flag after a quick fix doesn't put a formatting step above the text edit.
+          beforeRenderCell: (_value, { row, column }, ctx) => {
+            const fill = annotations.current.displayFlags.get(`${row}:${column}`)
+            if (fill) ctx.fillStyle = fill
+            return true
+          },
+          afterRenderCell: (value, { row, column, startX, endX, startY, endY }, ctx) => {
+            const { loadPreviews, zoom } = annotations.current
+            const preview = loadPreviews.get(`${row}:${column}`)
+            if (!preview || String(value?.v ?? '').trim() !== preview.raw.trim()) return
+            ctx.save()
+            ctx.font = `${(value?.fs || 16) * zoom}pt "Times New Roman", serif`
+            const width = ctx.measureText(preview.raw).width
+            ctx.font = `${12 * zoom}pt "Times New Roman", serif`
+            ctx.fillStyle = '#5d6d69'
+            ctx.textBaseline = 'middle'
+            ctx.textAlign = 'left'
+            const left = startX + 4, right = endX - 4
+            const inline = !preview.raw.includes('\n') && left + width + 8 + ctx.measureText(preview.text).width <= right
+            const x = inline ? left + width + 8 : left
+            const y = inline ? (startY + endY) / 2 : endY - 8 * zoom
+            if (x < right) ctx.fillText(preview.text, x, y, right - x)
+            ctx.restore()
+          },
+        }),
         afterSelectionChange: (_sheet, range) => {
           const row = range?.row?.[0], column = range?.column?.[0]
+          if (row == null || column == null) return
           // Remounts after block actions report an empty selection; keep the panel on its exercise.
-          const next = row == null || column == null ? null : blockAt(activeIntake, counts, row, column)
-          if (row != null && column != null) queueMicrotask(() => setActiveCell({ row, column }))
-          // The past-weights card is for the exercise itself: only its name column opens it.
-          if (next) queueMicrotask(() => { setSelection(next); setCardOpen(column % 5 === 1) })
-          else if (twoScreen && row != null && column != null) queueMicrotask(() => { setSelection(null); setCardOpen(false) })
+          const next = blockAt(activeIntake, counts, row, column)
+          queueMicrotask(() => {
+            const sameCell = lastCell.current?.row === row && lastCell.current.column === column
+            const position = { row, column }
+            lastCell.current = position
+            if (twoScreen && !sameCell) setMaxSetupCell(null)
+            if (!sameCell) setActiveCell(position)
+            if (next) {
+              setSelection(next)
+              // A canvas redraw reports the same selection again. Keep a card opened by
+              // “Use a different max” on that prescription cell while its preview updates.
+              if (!twoScreen || !sameCell || column % 5 === 1) setCardOpen(column % 5 === 1)
+            } else if (twoScreen) {
+              setSelection(null)
+              setCardOpen(false)
+            }
+          })
         },
       }), [activeIntake, counts, starts, readOnly, twoScreen]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  function commitCycleName(restoreBlank = false) {
+    if (!liveCycleName) return intake.name
+    const trimmed = intake.name.trim()
+    const name = trimmed || activeIntake.name
+    if ((trimmed || restoreBlank) && name !== intake.name) setIntake(staged => ({ ...staged, name }))
+    if (trimmed && name !== activeIntake.name) {
+      const next = cloneSheets(current.current)
+      next[0].name = name
+      setActiveIntake(active => ({ ...active, name }))
+      replaceSheet(next, `Renamed to “${name}”.`)
+    }
+    return name
+  }
+
+  function closeSettings() {
+    commitCycleName(true)
+    setSettingsOpen(false)
+  }
+
   function start() {
     if (readOnly || (twoScreen && intakeDisabled)) return
+    const buildIntake = { ...intake, name: commitCycleName(true) }
     if (twoScreen && onBuildDraft) {
-      const counts = initialCounts(intake)
-      onBuildDraft({ format: 'unrack-generated-cycle-v1', intake, counts, blockIds: initialBlockIds(intake, counts), sheets: generate(intake, counts) })
+      const counts = initialCounts(buildIntake)
+      onBuildDraft({ format: 'unrack-generated-cycle-v1', intake: buildIntake, counts, blockIds: initialBlockIds(buildIntake, counts), sheets: generate(buildIntake, counts) })
       return
     }
     if (sheets && !window.confirm('Replace this worksheet with a blank template? Save your current draft first to keep it.')) return
     setReview(null)
     setDestinationIssues([])
-    const newCounts = initialCounts(intake)
-    const next = generate(intake, newCounts)
+    const newCounts = initialCounts(buildIntake)
+    const next = generate(buildIntake, newCounts)
     current.current = cloneSheets(next)
     setSheets(next)
     setCounts(newCounts)
-    setBlockIds(initialBlockIds(intake, newCounts))
+    setBlockIds(initialBlockIds(buildIntake, newCounts))
     setSwitches({})
     setSelection(null)
     skippedPrescriptions.current = {}
-    setActiveIntake(intake)
+    setActiveIntake(buildIntake)
     setRevision(value => value + 1)
     setDirty(true)
     setMessage('Blank worksheet created. Select a cell and type or paste.')
@@ -851,7 +989,6 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
 
   // Workspace: check the sheet every time an edit lands (the engine reports edits when the coach
   // leaves a cell) and paint what can't be read. Paint is display-only: savedShape ignores fills.
-  const [check, setCheck] = useState<SheetFlags>({ flags: [], emptySlots: 0, other: [], percentCells: [] })
   const latestFlags = useRef(check.flags)
   latestFlags.current = check.flags
   const painted = useRef(new Map<string, string>())
@@ -859,8 +996,8 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     percentMaxes && onConvertPercent ? { resolver: percentMaxes, basis: percentBasis, locked: (row, column) => {
       const block = blockAt(activeIntake, counts, row, column)
       return Boolean(block && doneWeeks.has(`${block.day}:${block.week + 1}`))
-    } } : undefined),
-  [activeIntake, counts, blockIds, cycleId, switches, percentMaxes, percentBasis, doneWeeks, onConvertPercent])
+    } } : undefined, twoScreen),
+  [activeIntake, counts, blockIds, cycleId, switches, percentMaxes, percentBasis, doneWeeks, onConvertPercent, twoScreen])
   useEffect(() => {
     if (!workspace || !sheets || readOnly) return
     setCheck(readCheck())
@@ -880,10 +1017,10 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       try { engine.setCellFormat(row, column, 'bg', fill); painted.current.set(key, fill) } catch { /* Paint never blocks editing. */ }
     }
   }
-  useEffect(() => { if (workspace) queueMicrotask(() => paintFlags(check.flags)) }, [check]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (workspace && !twoScreen) queueMicrotask(() => paintFlags(check.flags)) }, [check]) // eslint-disable-line react-hooks/exhaustive-deps
   // A remount redraws from the source, which has no flag fills: paint again once it is up.
   useEffect(() => {
-    if (!workspace) return
+    if (!workspace || twoScreen) return
     painted.current.clear()
     let second = 0
     const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => paintFlags(latestFlags.current)) })
@@ -906,12 +1043,14 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const readyCount = check.flags.filter(flag => flag.percent === 'ready').length
   const missingMaxCount = check.flags.filter(flag => flag.percent === 'missing').length
   const otherCount = problemCount - readyCount - missingMaxCount
-  const percentHeader = `${readyCount} ready to convert · ${missingMaxCount} need a max${otherCount ? ` · ${otherCount} other` : ''}`
+  const percentHeader = twoScreen
+    ? [readyCount > 0 && `${readyCount} ready to convert`, missingMaxCount > 0 && `${missingMaxCount} ${missingMaxCount === 1 ? 'needs' : 'need'} a max`, otherCount > 0 && `${otherCount} other`].filter(Boolean).join(' · ')
+    : `${readyCount} ready to convert · ${missingMaxCount} need a max${otherCount ? ` · ${otherCount} other` : ''}`
   const publishBlocked = workspace && problemCount > 0 && readyCount === 0
   // Toolbar explanation: the flag on the selected cell, else the first flag in the selected exercise.
   const activeBlock = activeCell ? blockAt(activeIntake, counts, activeCell.row, activeCell.column) : null
   const focusFlag = activeCell ? check.flags.find(flag => flag.row === activeCell.row && flag.column === activeCell.column)
-    ?? (activeBlock ? check.flags.find(flag => { const block = blockAt(activeIntake, counts, flag.row, flag.column); return block?.day === activeBlock.day && block.block === activeBlock.block }) : undefined) : undefined
+    ?? (!twoScreen && activeBlock ? check.flags.find(flag => { const block = blockAt(activeIntake, counts, flag.row, flag.column); return block?.day === activeBlock.day && block.block === activeBlock.block }) : undefined) : undefined
 
   function changeZoom(direction: -1 | 1) {
     const nextZoom = Math.max(0.5, Math.min(1.5, Math.round((zoom + direction * 0.1) * 10) / 10))
@@ -949,6 +1088,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     onConvertPercent({
       cells,
       unit: activeIntake.unit,
+      ...(!twoScreen && { legacyCopy: true }),
       apply(conversions) {
         if (!conversions.length) return
         if (current.current !== source) {
@@ -963,6 +1103,70 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
         replaceSheet(next, `Converted ${conversions.length} ${conversions.length === 1 ? 'prescription' : 'prescriptions'} to ${activeIntake.unit}. Save draft to keep the changes.`)
       },
     })
+  }
+
+  function editFlagCell(flag: SheetFlag, text: string) {
+    if (readOnly || lockedCell(flag.row, flag.column) || !editableCell(activeIntake, counts, flag.row, flag.column, starts)) return
+    workbook.current?.setCellValue(flag.row, flag.column, text)
+    gridRef.current?.querySelector<HTMLElement>('.fortune-sheet-overlay')?.focus({ preventScroll: true })
+  }
+
+  function pickPercentBasis(name: string, id: string) {
+    setPercentBasis(current => new Map(current).set(percentExerciseKey(name), id))
+  }
+
+  function openBasis() {
+    if (basisSelect.current) basisSelect.current.focus()
+    else {
+      focusBasis.current = true
+      setCardOpen(true)
+    }
+  }
+
+  function selectedFlagHelp(flag: SheetFlag) {
+    const cell = check.percentCells.find(item => item.row === flag.row && item.column === flag.column)
+    const ready = cell && 'loads' in cell ? cell : undefined
+    const canEdit = !readOnly && !lockedCell(flag.row, flag.column)
+    const maxId = cell && flag.percent === 'missing' ? percentMaxes?.exerciseId(cell.exercise) : undefined
+    const saveMax = onSaveMax
+    const key = `${flag.row}:${flag.column}`
+    const canSetMax = maxId && saveMax
+    const setupRequested = canEdit && maxSetupCell === key
+    const mode = flag.percent !== 'missing' || !cell ? undefined
+      : setupRequested ? canSetMax ? 'form' : 'profile'
+      : flag.suggestedMax ? 'suggest' : canSetMax ? 'can-set' : 'profile'
+    const explanation = mode === 'profile' && cell
+      ? `No max for ${cell.exercise} yet. Add one in Profile → Maxes, or pick Based on in the exercise card.`
+      : flag.explanation ?? flag.message
+    const done = cell && 'reason' in cell && cell.reason === 'workout is locked'
+    const title = done ? 'Already done' : flag.percent === 'missing' ? 'Needs a max' : flagTitle[flag.kind]
+    return <div className={`cse-hint-flag cse-cell-help ${flagClassName(flag)}`}>
+      <div role="status"><b>{title} · {flag.label}</b>
+        <div>{explanation}{flag.suggestion && !explanation.endsWith(`Did you mean ${flag.suggestion}?`) && <> Did you mean <code>{flag.suggestion}</code>?</>}</div>
+      </div>
+      {canEdit && <div className="cse-flag-actions">
+        {flag.suggestion && <button type="button" className="cse-primary" onClick={() => editFlagCell(flag, flag.suggestion!)}>Use {flag.suggestion}</button>}
+        {ready && <>
+          <button type="button" className="cse-primary" onClick={() => editFlagCell(flag, rewritePercentPrescription(ready.raw, ready.loads, activeIntake.unit))}>
+            Write {ready.loads.map(load => `${load.weight} ${activeIntake.unit}`).join(' · ')}
+          </button>
+          <button type="button" onClick={openBasis}>Use a different max…</button>
+        </>}
+        {mode && cell && flag.suggestedMax && <button type="button" className="cse-primary"
+          onClick={() => pickPercentBasis(cell.exercise, flag.suggestedMax!.exercise_id)}>Use</button>}
+        {(mode === 'suggest' || mode === 'can-set') &&
+          <button type="button" onClick={() => setMaxSetupCell(key)}>Set a max</button>}
+      </div>}
+      {mode === 'form' && cell && canSetMax && <FlagMaxForm key={`${key}:${maxId}`} unit={activeIntake.unit}
+        onSave={async value => {
+          await saveMax(maxId, value, activeIntake.unit)
+          // An explicit None would otherwise hide the max the coach just saved.
+          const basisKey = percentExerciseKey(cell.exercise)
+          const previousBasis = percentBasis.get(basisKey)
+          if (previousBasis !== undefined) setPercentBasis(current =>
+            current.get(basisKey) === previousBasis ? new Map(current).set(basisKey, maxId) : current)
+        }} onClose={() => setMaxSetupCell(open => open === key ? null : open)} />}
+    </div>
   }
 
   async function publish() {
@@ -1014,7 +1218,16 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const hasPercentCells = check.percentCells.length > 0
   const canPublish = Boolean(onPublishReady) && !publishBlocked && !readOnly
   useImperativeHandle(twoScreen ? toolbarRef : undefined, () => ({
-    openSettings: () => { if (sheets && !readOnly) setSettingsOpen(value => !value) },
+    openSettings: ({ focusName } = {}) => {
+      if (!sheets || readOnly) return
+      if (settingsOpen) {
+        if (focusName) focusCycleName()
+        else closeSettings()
+        return
+      }
+      focusNameOnOpen.current = Boolean(focusName)
+      setSettingsOpen(true)
+    },
     jumpToDay,
     zoom: changeZoom,
     openPastWeights: () => { if (selectedExercise) setCardOpen(true) },
@@ -1046,16 +1259,16 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       <p className="cse-kicker">{day} · Exercise {block + 1} of {total}</p>
       <strong className="cse-card-name">{name || `Unnamed exercise · position ${block + 1}`}</strong>
       {!readOnly && showBasis && <label style={{ display: 'grid', gap: 4, marginBlock: 8 }}>Based on
-        <select style={{ width: '100%' }} value={percentMaxes.resolve(name, percentBasis.get(basisKey))?.exercise_id ?? ''}
-          onChange={event => { const id = event.target.value; setPercentBasis(current => new Map(current).set(basisKey, id)) }}>
+        <select ref={twoScreen ? basisSelect : undefined} style={{ width: '100%' }} value={percentMaxes.resolve(name, percentBasis.get(basisKey))?.exercise_id ?? ''}
+          onChange={event => pickPercentBasis(name, event.target.value)}>
           <option value="">None</option>
-          {percentMaxes.maxes.map(max => <option key={max.exercise_id} value={max.exercise_id}>{max.name} · {max.value} {max.unit} · {max.max_type === 'tested_1rm' ? 'Tested 1RM' : 'Training max'}</option>)}
+          {percentMaxes.maxes.map(max => <option key={max.exercise_id} value={max.exercise_id}>{max.name} · {max.value} {max.unit} · {maxTypeLabel(max.max_type)}</option>)}
         </select>
       </label>}
       {exerciseByWeek && <section className="cse-card-weeks" aria-label="Exercise by week">
         <div className="cse-card-weeks-head"><p className="cse-card-label">EXERCISE BY WEEK</p>
-          {!readOnly && (split ? <button className="cse-link" onClick={() => combineWeeks(day, block)}>{new Set(names).size === 1 ? '▴ One name for all weeks' : '▴ Combine matching weeks'}</button>
-            : <button className="cse-link" onClick={() => nameEachWeek(day, block)}>▾ Different exercise by week</button>)}</div>
+          {!readOnly && (split ? <button className="cse-link" onClick={() => combineWeeks(day, block)}>{twoScreen ? 'Same exercise every week' : new Set(names).size === 1 ? '▴ One name for all weeks' : '▴ Combine matching weeks'}</button>
+            : <button className="cse-link" onClick={() => nameEachWeek(day, block)}>{twoScreen ? 'Change exercise by week' : '▾ Different exercise by week'}</button>)}</div>
         <ol>{names.map((weekName, index) => <li key={index} className={`${done[index] ? 'done' : ''}${index === week ? ' selected' : ''}${runs.includes(index + 1) && index > 0 && weekName !== names[index - 1] ? ' changed' : ''}`}>
           <span className="cse-card-w">W{index + 1}</span><span>{weekName || <em>No name</em>}</span>{done[index] && <span className="cse-card-done" title="Workout done, locked">Done</span>}</li>)}</ol>
         {!readOnly && doneCount > 0 && <p className="cse-card-hint">Done weeks are locked. Type a new name in the exercise cell to change the weeks still to come.</p>}
@@ -1098,8 +1311,15 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     </aside>
   }
 
+  const listedFlags = twoScreen ? check.flags.filter(flag => flag.percent !== 'missing') : check.flags
   const showIntake = !readOnly && (!workspace || !sheets || settingsOpen)
-  const hint = focusFlag ? <FlagExplanation flag={focusFlag} onGo={() => goToCell(focusFlag.row, focusFlag.column)} /> : <span className="cse-hint">Prescriptions: sets x reps @ load or RPE, e.g. 3x8 @ 225, 3x8 @ 7, 3x12 each @ 5 lb, 1x8+ or AMRAP. @ 10 or less is RPE; add lb or kg for a light weight. SKIP leaves a week out. Red = can't read, yellow = empty or unclear. Click an exercise name for past weights.{check.flags.length > 0 && ' Select a red or yellow cell to see why.'}</span>
+  const hint = twoScreen ? <>
+    {focusFlag && selectedFlagHelp(focusFlag)}
+    <div className="cse-example-control">
+      <button type="button" className="cse-link" aria-expanded={examplesOpen} onClick={() => setExamplesOpen(open => !open)}>Examples</button>
+      {examplesOpen && <div className="cse-examples cse-example-popover">{prescriptionExamples}</div>}
+    </div>
+  </> : focusFlag ? <FlagExplanation flag={focusFlag} onGo={() => goToCell(focusFlag.row, focusFlag.column)} /> : <span className="cse-hint">Prescriptions: sets x reps @ load or RPE, e.g. 3x8 @ 225, 3x8 @ 7, 3x12 each @ 5 lb, 1x8+ or AMRAP. @ 10 or less is RPE; add lb or kg for a light weight. SKIP leaves a week out. Red = can't read, yellow = empty or unclear. Click an exercise name for past weights.{check.flags.length > 0 && ' Select a red or yellow cell to see why.'}</span>
   const Page = twoScreen && onBuildDraft ? 'div' : 'main'
   return <Page className={workspace ? 'cse-page cse-page-workspace' : 'cse-page'}>
     {!workspace && <header className="cse-top"><span>UNRACK <b>COACH</b></span><span>{localPersistence ? 'LOCAL REVIEW · EMBEDDED SPREADSHEET PROOF' : 'TRAINING CYCLE BUILDER'}</span></header>}
@@ -1109,7 +1329,14 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       : <div><p className="cse-kicker">NEW TRAINING CYCLE</p><h1>Build in a spreadsheet</h1><p>{localPersistence ? 'Choose the cycle shape, then program directly in the cells. This local proof does not publish to athletes.' : 'Choose the cycle shape, program directly in the cells, and review every prescription before publishing.'}</p></div>)}
       <div className="cse-fields">
         <label>Client{clientOptions ? <select value={intake.client} onChange={e => setIntake({ ...intake, client: e.target.value })}><option value="">Select a client</option>{clientOptions.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select> : <input value={intake.client} placeholder="Select client in connected builder" onChange={e => setIntake({ ...intake, client: e.target.value })}/>}</label>
-        <label>Cycle name<input value={intake.name} onChange={e => setIntake({ ...intake, name: e.target.value })}/></label>
+        <label>Cycle name<input ref={cycleNameInput} value={intake.name}
+          onChange={e => { const name = e.target.value; setIntake(staged => ({ ...staged, name })) }}
+          onBlur={liveCycleName ? () => { commitCycleName() } : undefined}
+          onKeyDown={liveCycleName ? e => {
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+            e.preventDefault()
+            closeSettings()
+          } : undefined}/></label>
         <label>Weeks<input type="number" min="1" max="12" value={intake.weeks} onChange={e => setIntake({ ...intake, weeks: Math.max(1, Math.min(12, Number(e.target.value) || 1)) })}/></label>
         <div className="cse-field"><span>Start date</span><StartDatePicker value={intake.start} onChange={start => setIntake({ ...intake, start })}/></div>
         <label>Default unit<select value={intake.unit} onChange={e => setIntake({ ...intake, unit: e.target.value as 'lb' | 'kg' })}><option value="lb">lb</option><option value="kg">kg</option></select></label>
@@ -1125,8 +1352,11 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
         : <div><p className="cse-kicker">WORKSHEET</p><h2>{activeIntake.name}</h2><span>{activeIntake.weeks} weeks · {activeIntake.days.join(', ')} · {activeIntake.unit}</span></div>}<div className="cse-actions"><div className="cse-zoom" aria-label="Spreadsheet zoom"><button aria-label="Zoom out" disabled={zoom <= 0.5} onClick={() => changeZoom(-1)}>−</button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" disabled={zoom >= 1.5} onClick={() => changeZoom(1)}>+</button></div><span className="cse-divider" aria-hidden="true" /><button onClick={() => void save()} disabled={saving || !localPersistence && !onSaveDraft}>{saving ? 'Saving…' : 'Save draft'}</button>{workspace && percentMaxes && onConvertPercent && <button disabled={saving || publishing || publishBusy || !check.percentCells.length} onClick={() => openConvert()}>{percentConversionLabel(activeIntake.unit)}</button>}{!(workspace && onPublishReady) && <button className={onPublishReady ? undefined : 'cse-primary'} onClick={() => reviewInterpretation()}>Review cycle</button>}{onPublishReady && <button className="cse-primary" disabled={publishing || saving || publishBusy || publishBlocked} title={publishBlocked ? 'Fix the highlighted cells to publish' : undefined} onClick={() => void publish()}>{publishing || publishBusy ? 'Publishing…' : 'Publish'}</button>}</div></div>}
       {workspace && problemCount > 0 && <div className="cse-flags" role="region" aria-label="Cells to fix">
         <strong>{check.percentCells.length > 0 ? percentHeader : problemCount === 1 ? '1 thing to fix before publishing' : `${problemCount} things to fix before publishing`}</strong>
-        <ul>{check.flags.slice(0, 8).map(flag => <li key={`${flag.row}:${flag.column}`}><button className={`cse-flag ${flagClassName(flag)}`} title={flag.message} onClick={() => goToCell(flag.row, flag.column)}><b>{flag.label}{flag.percent ? ':' : ''}</b> {flag.message}</button></li>)}
-          {check.flags.length > 8 && <li className="cse-flag-more">+{check.flags.length - 8} more highlighted in the sheet</li>}
+        <ul>{listedFlags.slice(0, 8).map(flag => <li key={`${flag.row}:${flag.column}`}>
+          <button className={`cse-flag ${flagClassName(flag)}`} title={twoScreen ? undefined : flag.message} onClick={() => goToCell(flag.row, flag.column)}>
+            <b>{flag.label}{flag.percent && !twoScreen ? ':' : ''}</b> {!twoScreen && flag.message}
+          </button></li>)}
+          {listedFlags.length > 8 && <li className="cse-flag-more">+{listedFlags.length - 8} more highlighted in the sheet</li>}
           {check.emptySlots > 0 && <li className="cse-flag-more">{check.emptySlots === 1 ? '1 exercise slot is empty' : `${check.emptySlots} exercise slots are empty`}: fill it in or remove it from the exercise card.</li>}
           {check.other.map(message => <li key={message} className="cse-flag-more">{message}</li>)}</ul>
       </div>}
@@ -1134,6 +1364,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
         'Saved draft reopened from Coach storage.', 'Saved draft reopened from this browser.',
         'Draft saved to Coach storage.', 'Draft saved in this browser. Reload to check it reopens.',
       ].includes(message) && <p className="ccd-toolbar-notice" ref={statusRef} role="status">{message}</p>}
+      {twoScreen && !readOnly && !check.hasPrescriptions && <p className="cse-examples cse-empty-examples">{prescriptionExamples}</p>}
       <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}><div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} {...(readOnly ? { allowEdit: false } : {})} showFormulaBar={false} addRows={0} cellContextMenu={readOnly ? ['copy'] : ['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>{exercisePanel()}</div>
       {!twoScreen && !readOnly && <div className="cse-status" ref={statusRef}><span>{unsaved ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>}
     </section>}

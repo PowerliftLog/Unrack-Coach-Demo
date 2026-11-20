@@ -14,6 +14,7 @@ export function CoachAthleteErasure({ erase, gym, athlete, name, onClose, onEras
   const [confirmation, setConfirmation] = useState('')
   const [busy, setBusy] = useState(false)
   const [retry, setRetry] = useState(false)
+  const [timedOut, setTimedOut] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const attempt = useRef<CoachEraseAthleteInputV1 | null>(null)
   const inFlight = useRef(false)
@@ -25,7 +26,7 @@ export function CoachAthleteErasure({ erase, gym, athlete, name, onClose, onEras
 
   const confirmName = confirmation.trim()
   async function apply() {
-    if (inFlight.current || confirmName !== name) return
+    if (inFlight.current || timedOut || confirmName !== name) return
     // Send the roster name itself once the typed text matches it, so Unicode trimming can't block a real name.
     attempt.current ??= { request_id: crypto.randomUUID(), gym, athlete, confirm_name: name }
     inFlight.current = true
@@ -35,16 +36,17 @@ export function CoachAthleteErasure({ erase, gym, athlete, name, onClose, onEras
       await erase(attempt.current)
     } catch (cause) {
       if (active.current) {
-        if (cause instanceof CoachApiError && cause.status === 422) {
+        if (cause instanceof CoachApiError && cause.code === 'erase_timed_out') {
+          attempt.current = null
+          setRetry(false)
+          setConfirmation('')
+          setTimedOut(true)
+          setError(cause.message)
+        } else if (cause instanceof CoachApiError && cause.status === 422) {
           // Nothing was erased: the next try is a fresh request.
           attempt.current = null
           setRetry(false)
           setError(new CoachApiError('erase_confirm_required').message)
-        } else if (cause instanceof CoachApiError && cause.code === 'erase_timed_out') {
-          attempt.current = null
-          setConfirmation('')
-          setRetry(false)
-          setError(cause.message)
         } else if (cause instanceof CoachApiError && cause.status === 409 && cause.code === 'erase_refused') {
           setRetry(false)
           setError(cause.message)
@@ -74,14 +76,14 @@ export function CoachAthleteErasure({ erase, gym, athlete, name, onClose, onEras
     <p>This permanently deletes their name, profile, logged workouts, maxes, bodyweight, coach notes and delivered programs, and disconnects every phone they used. Sets not yet synced from a phone are lost. The cycles you built for them in the builder stay yours, without their logs or name, under "Deleted athlete" in Removed clients and the Library.</p>
     <p><strong>This can't be undone.</strong></p>
     <label className="oct18-erasure-confirm">Type the client's name to confirm
-      <input autoFocus type="text" placeholder={name} value={confirmation} disabled={busy || retry} onChange={event => setConfirmation(event.target.value)} />
+      <input autoFocus type="text" placeholder={name} value={confirmation} disabled={busy || retry || timedOut} onChange={event => setConfirmation(event.target.value)} />
     </label>
     {error && <p role="alert" className="workspace-error">{error}</p>}
     <div className="dialog-actions">
-      <button className="button outline" disabled={busy} onClick={onClose}>Cancel</button>
-      <button className="button primary danger" disabled={busy || confirmName !== name} onClick={() => void apply()}>
+      <button className="button outline" disabled={busy} onClick={onClose}>{timedOut ? 'Close' : 'Cancel'}</button>
+      {!timedOut && <button className="button primary danger" disabled={busy || confirmName !== name} onClick={() => void apply()}>
         {busy ? 'Deleting…' : retry ? 'Retry same request' : 'Delete data permanently'}
-      </button>
+      </button>}
     </div>
   </ModalDialog>
 }

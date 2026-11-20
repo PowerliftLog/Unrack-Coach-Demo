@@ -111,3 +111,38 @@
 .cse-card-hint{margin:2px 0 0;font-size:12px;color:#5d6d68}
 /* Flag explanation in the toolbar hint line (Joe, Nov 18): same colours as the cell flags. */
 .cse-hint-flag{display:inline-block;max-width:100%;padding:4px 9px;border:1px solid #f0b9ae;border-radius:6px;background:#ffd3cc;color:#5b2a20;font-size:12px;line-height:1.45}.cse-hint-flag.missing,.cse-hint-flag.unclear{background:#fff0b8;border-color:#ecd27a;color:#5a4710}.cse-hint-flag b{margin-right:2px}.cse-hint-flag button{border:0;background:none;padding:0;font:inherit;font-weight:600;color:inherit;text-decoration:underline;cursor:pointer}.cse-hint-flag code{font-family:'DM Mono',monospace;font-size:11px;background:#ffffff99;padding:1px 4px;border-radius:3px}
+.cse-hint-flag.cse-cell-help { display: block; padding: 8px 12px; }
+.cse-hint-flag.cse-cell-help.yellow, .ccb-hint ~ .cse-workspace .cse-flag.yellow {
+  background: #ede4fa;
+  border-color: #d1bce8;
+  color: #523d70;
+}
+.cse-flag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cse-flag-actions:not(:empty) { margin-top: 6px; }
+.cse-cell-help .cse-flag-actions button, .cse-flag-actions input {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+.cse-cell-help .cse-flag-actions .cse-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.cse-flag-actions input { width: 6em; font: inherit; }
+.cse-example-control { display: inline-block; position: relative; }
+.cse-examples { color: var(--text-muted); font-size: 12px; }
+.cse-example-popover {
+  position: absolute;
+  z-index: 20;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 48px));
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.cse-empty-examples { margin: 8px 12px; }

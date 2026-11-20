@@ -1,18 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CoachCycleDraftRecord, createCoachCycleDraftApi } from './lib/coach-cycle-draft-api'
 import type { CoachErasedAthleteDraftSummaryV1, October18CoachApi } from './lib/coach-api'
+import { coachCycleTemplatePeek } from './lib/coach-cycle-template'
 import { useErasedAthleteDrafts } from './lib/use-erased-athlete-drafts'
 
 // Library (Joe, Nov 16 review 3): every saved cycle across the coach's clients, ready to copy to
 // the athlete being built. Copying makes a new unsaved draft and leaves the original intact.
 type DraftApi = Pick<ReturnType<typeof createCoachCycleDraftApi>, 'list' | 'read'>
 export type ErasedAthleteDraftApi = Partial<Pick<October18CoachApi, 'getCoachErasedAthleteDraftsV2' | 'readCoachErasedAthleteDraftV1'>>
-type Entry = {
+type EntrySource = {
   id: string; clientName: string; updatedAt: string; record: CoachCycleDraftRecord | null
+  peek?: string
   intake: Pick<CoachErasedAthleteDraftSummaryV1, 'name' | 'weeks' | 'days' | 'unit'>
 }
+type Entry = Omit<EntrySource, 'intake'> & { name: string; searchText: string; details: string }
 const MAX_CLIENTS = 60, MAX_READS = 120
 const DELETED_ATHLETE = 'Deleted athlete'
+
+function libraryEntry({ intake, ...entry }: EntrySource): Entry {
+  const details = [
+    entry.clientName,
+    intake.weeks !== null ? `${intake.weeks} ${intake.weeks === 1 ? 'week' : 'weeks'}` : '',
+    intake.days.map(day => day.slice(0, 3)).join(', '), intake.unit,
+    `saved ${new Date(entry.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+  ].filter(Boolean).join(' · ')
+  return {
+    ...entry, details, name: intake.name || 'Untitled cycle',
+    searchText: `${intake.name} ${entry.clientName} ${entry.peek ?? ''}`.toLowerCase(),
+  }
+}
 
 export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, onUse, onClose }: {
   api: DraftApi; erasedApi?: ErasedAthleteDraftApi; gym: string; clients: { id: string; name: string }[]; targetName: string
@@ -24,6 +40,13 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
   const [reading, setReading] = useState(false)
   const [readFailed, setReadFailed] = useState(false)
   const [search, setSearch] = useState('')
+  const [deletedOpen, setDeletedOpen] = useState(false)
+  const needle = search.trim().toLowerCase()
+  const showDeleted = deletedOpen || Boolean(needle)
+  const { loadAll, page: erasedPage, loading: loadingErased, failed: erasedFailed } = erasedDrafts
+  useEffect(() => {
+    if (showDeleted && !loadingErased && !erasedFailed) void loadAll()
+  }, [showDeleted, loadingErased, erasedFailed, loadAll])
   const readAttempt = useRef<object | null>(null)
   const useRecord = useRef(onUse)
   useEffect(() => { useRecord.current = onUse }, [onUse])
@@ -48,7 +71,7 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
       const existing = await Promise.all(drafts.slice(0, MAX_READS).map(async ({ id, athleteId, clientName, updatedAt }): Promise<Entry | null> => {
         try {
           const record = await api.read({ gym, athlete: athleteId, draft: id })
-          return { id, clientName, updatedAt, record, intake: record.source.intake }
+          return libraryEntry({ id, clientName, updatedAt, record, intake: record.source.intake, peek: coachCycleTemplatePeek(record.source) })
         } catch { error = true; return null }
       }))
       if (!active) return
@@ -58,19 +81,20 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
     return () => { active = false; readAttempt.current = null }
   }, [api, erasedApi, gym, clientKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const entries = useMemo(() => {
-    if (!saved || (erasedDrafts.loading && !erasedDrafts.page)) return null
-    const deleted = erasedDrafts.page?.items ?? []
-    const erasedIds = new Set(deleted.map(item => item.draft_id))
-    const found: Entry[] = [
-      ...saved.filter(entry => !erasedIds.has(entry.id)),
-      ...deleted.map(intake => ({ id: intake.draft_id, clientName: DELETED_ATHLETE, updatedAt: intake.updated_at, record: null, intake })),
-    ]
-    return found.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [saved, erasedDrafts.loading, erasedDrafts.page])
-  const shown = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    return (entries ?? []).filter(entry => !needle || `${entry.intake.name} ${entry.clientName}`.toLowerCase().includes(needle))
-  }, [entries, search])
+    if (!saved) return null
+    const deleted = (erasedPage?.items ?? []).map(intake => libraryEntry({
+      id: intake.draft_id, clientName: DELETED_ATHLETE, updatedAt: intake.updated_at, record: null, intake,
+    })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    const erasedIds = new Set(deleted.map(entry => entry.id))
+    return { saved: saved.filter(entry => !erasedIds.has(entry.id)), deleted }
+  }, [saved, erasedPage])
+  const { shownSaved, matchingDeleted } = useMemo(() => {
+    const matches = (entry: Entry) => entry.searchText.includes(needle)
+    return { shownSaved: entries?.saved.filter(matches) ?? [], matchingDeleted: entries?.deleted.filter(matches) ?? [] }
+  }, [entries, needle])
+  const hasMoreDeleted = Boolean(erasedPage?.next_cursor)
+  const loadingDeleted = showDeleted && (loadingErased || hasMoreDeleted && !erasedFailed)
+  const shownDeleted = showDeleted && !(needle && loadingDeleted) ? matchingDeleted : []
 
   async function useEntry(entry: Entry) {
     if (readAttempt.current) return
@@ -99,28 +123,39 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
     }
   }
 
+  function cycleList(rows: Entry[], label: string) {
+    return <ul className="ccd-library-list" aria-label={label}>{rows.map(entry => {
+      const { name, details } = entry
+      return <li key={entry.id}>
+        <div>
+          <strong>{name}</strong>
+          <span>{details}</span>
+          {entry.peek && <small className="ccd-library-peek">{entry.peek}</small>}
+        </div>
+        <button className="button primary" aria-label={`Use ${name} for ${targetName}`} disabled={reading} onClick={() => void useEntry(entry)}>Use</button>
+      </li>
+    })}</ul>
+  }
+
+  const deletedCount = entries?.deleted.length ?? 0
   return <div className="ccd-library-panel">
     <div className="ccd-drawer-head"><h2>Library</h2><button onClick={onClose}>Back to sheet</button></div>
-    <p>Every saved cycle across your clients. <b>Use for {targetName}</b> copies it into a new draft for {targetName}, starting next Monday. The original stays as it is.</p>
-    <input className="ccd-library-search" aria-label="Search library" placeholder="Search by cycle or client" value={search} onChange={event => setSearch(event.target.value)} />
-    {!entries ? <p role="status">Loading saved cycles…</p>
-      : shown.length === 0 ? <p>{entries.length ? 'No cycles match.' : 'No saved cycles yet. Save a cycle for any client and it shows up here.'}</p>
-      : <ul className="ccd-library-list" aria-label="Saved cycles">{shown.map(entry => {
-        const { intake } = entry
-        const details = [
-          intake.weeks !== null ? `${intake.weeks} ${intake.weeks === 1 ? 'week' : 'weeks'}` : '',
-          intake.days.map(day => day.slice(0, 3)).join(', '), intake.unit,
-        ].filter(Boolean).join(' · ')
-        return <li key={entry.id}>
-          <div><strong>{intake.name || 'Untitled cycle'}</strong>
-            {details && <span>{details}</span>}
-            <small>{entry.clientName} · saved {new Date(entry.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</small></div>
-          <button className="button primary" disabled={reading} onClick={() => void useEntry(entry)}>Use for {targetName}</button>
-        </li>
-      })}</ul>}
-    {entries && erasedDrafts.page?.next_cursor && <button className="button outline" disabled={erasedDrafts.loading} onClick={erasedDrafts.showMore}>Show more</button>}
-    {(failed || (erasedDrafts.failed && !erasedDrafts.page)) && <p className="ccd-note">Some clients' cycles could not be loaded.</p>}
-    {erasedDrafts.failed && erasedDrafts.page && <p className="ccd-note" role="alert">More cycles could not be loaded. Try again.</p>}
+    <p>Copy a cycle you've written. The copy starts next Monday for {targetName}; the original doesn't change.</p>
+    <input className="ccd-library-search" aria-label="Search library" placeholder="Search by cycle, athlete or exercise" value={search} onChange={event => setSearch(event.target.value)} />
+    {!entries || (loadingErased && !erasedPage) ? <p role="status">Loading saved cycles…</p> : <>
+      {shownSaved.length > 0 && cycleList(shownSaved, 'Saved cycles')}
+      {!needle && (deletedCount > 0 || hasMoreDeleted) && <button className="ccd-quiet ccd-library-fold" aria-expanded={deletedOpen}
+        onClick={() => setDeletedOpen(value => !value)}>{deletedOpen ? 'Hide cycles from deleted athletes'
+          : hasMoreDeleted ? 'Show cycles from deleted athletes' : `Show ${deletedCount} ${deletedCount === 1 ? 'cycle' : 'cycles'} from deleted athletes`}</button>}
+      {shownDeleted.length > 0 && <><h3 className="ccd-library-group-title">From deleted athletes</h3>
+        {cycleList(shownDeleted, 'From deleted athletes')}</>}
+      {loadingDeleted && <p role="status">Loading cycles from deleted athletes…</p>}
+      {!loadingDeleted && !shownSaved.length && !shownDeleted.length && (needle || !deletedCount && !hasMoreDeleted)
+        && <p>{entries.saved.length || deletedCount ? 'No cycles match.' : 'No saved cycles yet. Save a cycle for any client and it shows up here.'}</p>}
+      {showDeleted && erasedFailed && hasMoreDeleted && <button className="button outline" onClick={loadAll}>Show more</button>}
+    </>}
+    {(failed || (erasedFailed && !erasedPage)) && <p className="ccd-note">Some clients' cycles could not be loaded.</p>}
+    {erasedFailed && erasedPage && <p className="ccd-note" role="alert">More cycles could not be loaded. Try again.</p>}
     {reading && <p className="ccd-note" role="status">Loading saved cycle…</p>}
     {readFailed && <p className="ccd-note" role="alert">That cycle could not be loaded. Try again.</p>}
   </div>

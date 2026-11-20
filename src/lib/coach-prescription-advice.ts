@@ -37,6 +37,7 @@ function loadFirst(text: string): string | null {
 }
 
 const REWRITES: { lead: string; rewrite(text: string): string | null }[] = [
+  { lead: 'Use a single @.', rewrite: t => { const n = t.replace(/@(?:\s*@)+/g, '@'); return n === t ? null : n } },
   { lead: 'Sets come first.', rewrite: loadFirst },
   { lead: 'Put RPE before the number.', rewrite: text => {
     const next = text.replace(/@\s*(\d+(?:\.\d+)?)\s*rpe\b/gi, (_m, value: string) => `@ RPE ${value}`)

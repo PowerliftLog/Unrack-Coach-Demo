@@ -2,7 +2,7 @@ import CoachExcelNextCyclePreview from './CoachExcelNextCyclePreview'
 import { readNextCycleRecovery, nextCycleRecoveryKey } from './coach-excel-next-cycle-recovery'
 import { coachExcelBetaPublicationRecoveryKey, readCoachExcelBetaPublicationRecovery, COACH_EXCEL_BETA_RECOVERY_CHANGED } from './coach-excel-publication-recovery'
 import type { createCoachExcelPublishApi } from './lib/coach-excel-publish-api'
-import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
 import type { Sheet } from '@fortune-sheet/core'
 import CoachSheetEditorProof, { nameStarts, validStructure, type CoachSheetActions, type CoachSheetDraft, type CoachSheetToolbarState } from './review/CoachSheetEditorProof'
 import CoachCycleServerPreview from './CoachCycleServerPreview'
@@ -19,8 +19,9 @@ import { CoachCycleLibrary, nextMondayIso, type ErasedAthleteDraftApi } from './
 import { CoachCycleTemplateError, type createCoachCycleTemplateApi, type CoachCycleTemplateCreateInput, type CoachCycleTemplateDeleteInput, type CoachCycleTemplateSummary } from './lib/coach-cycle-template-api'
 import { CoachCyclePublishError, type createCoachCyclePublishApi, type CoachCyclePublishPreview, type CoachCyclePublishSource } from './lib/coach-cycle-publish-api'
 import ExercisePastPerformance, { type AthleteHistoryState } from './ExercisePastPerformance'
-import type { CoachExerciseHistoryV1, PercentageProgrammingApi } from './lib/coach-api'
+import type { AthleteTrackingV1, CoachExerciseHistoryV1, PercentageProgrammingApi, SaveProgrammingMaxV1Input } from './lib/coach-api'
 import { createPercentMaxResolver, type PercentMaxResolver } from './lib/coach-percent-resolution'
+import { localToday } from './lib/local-date'
 import { CoachConvertPercentDialog, type PercentConversionRequest } from './CoachConvertPercentDialog'
 import { CoachExcelNextCycleError } from './lib/coach-excel-next-cycle-client'
 import type { CoachCycleRunningState, CoachCycleRunningUpdateInput, CoachExcelNextCyclePublishResult } from './lib/coach-excel-next-cycle-api'
@@ -60,10 +61,12 @@ export type CoachCycleDraftWorkspaceProps = {
   openProgram?: { name: string; startOn?: string | null } | null
   /** Clients whose saved cycles appear in the Library (copy any cycle to this athlete). */
   libraryClients?: { id: string; name: string }[]
+  /** The connected Coach API is already supplied here for the cycle library. */
   erasedAthleteDraftApi?: ErasedAthleteDraftApi
   /** Athlete's recent sessions for the builder's past-performance reference (read-only). */
   athleteHistory?: (input: { target_gym: string; target_athlete: string }) => Promise<CoachExerciseHistoryV1>
   getProgrammingMaxesV1?: PercentageProgrammingApi['getProgrammingMaxesV1']
+  saveProgrammingMaxV1?: PercentageProgrammingApi['saveProgrammingMaxV1']
   getAthleteTrackingV1?: PercentageProgrammingApi['getAthleteTrackingV1']
   layout?: 'two-screen'
   today: string
@@ -233,7 +236,7 @@ export function CoachBuilderStart({ api, gym, clients, onStarted, navigationRef 
 export default function CoachCycleDraftWorkspace(props: CoachCycleDraftWorkspaceProps) {
   return <DraftWorkspace key={`${props.ownerSubject}:${props.gym}:${props.athlete}`} {...props} />
 }
-function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, getProgrammingMaxesV1, getAthleteTrackingV1, draftNames = false, autoOpen = false, openProgram = null, libraryClients, erasedAthleteDraftApi, layout, today, initialDraftId, navigationRef, onBack }: CoachCycleDraftWorkspaceProps) {
+function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, getProgrammingMaxesV1, saveProgrammingMaxV1, getAthleteTrackingV1, draftNames = false, autoOpen = false, openProgram = null, libraryClients, erasedAthleteDraftApi, layout, today, initialDraftId, navigationRef, onBack }: CoachCycleDraftWorkspaceProps) {
   const twoScreen = layout === 'two-screen'
   const sheet = useRef<CoachSheetActions>(null)
   const [toolbarState, setToolbarState] = useState<CoachSheetToolbarState | null>(null)
@@ -261,20 +264,62 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   }, [athleteHistory, gym, athlete])
   const [percentMaxes, setPercentMaxes] = useState<PercentMaxResolver>()
   const [conversion, setConversion] = useState<PercentConversionRequest | null>(null)
+  const trackingCache = useRef<AthleteTrackingV1 | undefined>(undefined)
+  const maxesEpoch = useRef(0)
+  const readPercentMaxes = useCallback(async (tracking?: AthleteTrackingV1) => {
+    if (!getProgrammingMaxesV1 || !getAthleteTrackingV1) return undefined
+    const target = { target_gym: gym, target_athlete: athlete }
+    const [maxes, athleteTracking] = await Promise.all([getProgrammingMaxesV1(target), tracking ?? getAthleteTrackingV1(target)])
+    return { maxes, tracking: athleteTracking }
+  }, [getProgrammingMaxesV1, getAthleteTrackingV1, gym, athlete])
+  useLayoutEffect(() => () => {
+    maxesEpoch.current++
+    trackingCache.current = undefined
+  }, [readPercentMaxes, twoScreen])
   useEffect(() => {
     setPercentMaxes(undefined)
-    if (!getProgrammingMaxesV1 || !getAthleteTrackingV1) return
-    let active = true
-    const target = { target_gym: gym, target_athlete: athlete }
-    const loadMaxes = async () => {
-      try {
-        const [maxes, tracking] = await Promise.all([getProgrammingMaxesV1(target), getAthleteTrackingV1(target)])
-        if (active) setPercentMaxes(createPercentMaxResolver(maxes, tracking, twoScreen))
-      } catch { /* Fall back to the existing sheet checks if either read is unavailable. */ }
+    const epoch = maxesEpoch.current
+    readPercentMaxes().then(result => {
+      if (epoch !== maxesEpoch.current || !result) return
+      trackingCache.current = result.tracking
+      setPercentMaxes(createPercentMaxResolver(result.maxes, result.tracking, twoScreen))
+    })
+      .catch(() => { /* Fall back to the existing sheet checks if either read is unavailable. */ })
+  }, [readPercentMaxes, twoScreen])
+  const savingMax = useRef(false)
+  const pendingMax = useRef<{ input: SaveProgrammingMaxV1Input; saved: boolean } | null>(null)
+  async function saveTrainingMax(exerciseId: string, value: number, unit: 'lb' | 'kg') {
+    if (savingMax.current) throw new Error('A max is already saving. Try again in a moment.')
+    if (!saveProgrammingMaxV1) throw new Error('Add the max in Profile → Maxes.')
+    const epoch = maxesEpoch.current
+    let request = pendingMax.current
+    if (!request || request.input.exercise_id !== exerciseId || request.input.value !== value || request.input.unit !== unit) {
+      request = { saved: false, input: {
+        target_gym: gym, target_athlete: athlete, request_id: crypto.randomUUID(), exercise_id: exerciseId,
+        value, unit, max_type: 'training_max', effective_from: localToday(), source: 'coach_entry',
+        expected_profile_version: null, candidate_id: null,
+      } }
+      pendingMax.current = request
     }
-    void loadMaxes()
-    return () => { active = false }
-  }, [getProgrammingMaxesV1, getAthleteTrackingV1, gym, athlete, twoScreen])
+    savingMax.current = true
+    try {
+      if (!request.saved) {
+        try {
+          await saveProgrammingMaxV1(request.input)
+          request.saved = true
+        } catch { throw new Error('Couldn’t save the max. Try again.') }
+      }
+      if (epoch !== maxesEpoch.current) return
+      try {
+        const result = await readPercentMaxes(trackingCache.current)
+        if (epoch !== maxesEpoch.current) return
+        if (result) trackingCache.current = result.tracking
+        setPercentMaxes(result && createPercentMaxResolver(result.maxes, result.tracking, twoScreen))
+      }
+      catch { throw new Error('Max saved. Try again to refresh the sheet.') }
+      pendingMax.current = null
+    } finally { savingMax.current = false }
+  }
   const [drafts, setDrafts] = useState<CoachCycleDraftSummary[]>([])
   // Cycle names for the picker, read once per draft revision (read-only; a failed read keeps the dated label).
   const [names, setNames] = useState<Record<string, DraftLabel>>({})
@@ -891,6 +936,12 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const [publishRequest, setPublishRequest] = useState(0)
   const [publishBusy, setPublishBusy] = useState(false)
   const [library, setLibrary] = useState(false)
+  const nameCopy = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const draftId = nameCopy.current
+    nameCopy.current = null
+    if (draftId && draftId === opened?.id) sheet.current?.openSettings({ focusName: true })
+  }, [opened?.id])
   const navigationAvailable = () => !busyRef.current && !(twoScreen && (runningBusy || publishBusy))
   useImperativeHandle(twoScreen ? navigationRef : undefined, () => ({
     canLeave: () => navigationAvailable() && !needsLeaveDecision(),
@@ -946,16 +997,20 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     } else setRunning(null)
   }
 
-  async function copyFromLibrary(record: CoachCycleDraftRecord, clientName: string) {
+  async function copyFromLibrary(record: CoachCycleDraftRecord, clientName: string, fromLibrary = false) {
     if (busyRef.current || pending.current || blocked) return
     const permission = leaveEdits()
     if ((permission !== true && !await permission) || !alive.current || busyRef.current) return
     try {
       const start = nextMondayIso()
       const copy = copyCoachCycleTemplate(extractCoachCycleTemplate(record.source), { athleteId: athlete, clientName: athleteName, start, unit: record.source.intake.unit })
+      const nameAfterUse = twoScreen && fromLibrary
+      if (nameAfterUse) nameCopy.current = copy.draftId
       open({ id: copy.draftId, revision: 0, initial: { ...copy.source, sheets: copy.source.sheets as Sheet[] }, mount: (openRef.current?.mount ?? 0) + 1 })
       setBlocked(false); setLibrary(false); setPublished(''); setRunning(null); runningRequest.current = null
-      setMessage(`Copied “${record.source.intake.name}” from ${clientName} into a new draft for ${athleteName}, starting ${new Date(`${start}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}. Check the weights for ${athleteName}, then save or publish.`)
+      const date = shortDay(start)
+      setMessage(nameAfterUse ? `Copied. Starts ${date}. Name it, check the weights, then send.`
+        : `Copied “${record.source.intake.name}” from ${clientName} into a new draft for ${athleteName}, starting ${date}. Check the weights for ${athleteName}, then save or publish.`)
     } catch { setMessage('That cycle could not be copied. Open it on its own client and check its sheet.') }
   }
   const publishSection = useRef<HTMLElement>(null)
@@ -1014,7 +1069,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     {modal}
     {twoScreen ? <header className="ccb-header">
       <h1>{athleteName}</h1>
-      <CoachCycleStrip cycles={cycles} running={stripRunning} progress={progress} queued={queued} loading={loading} selected={selectedCycle} attempted={attemptedCycle}
+      <CoachCycleStrip cycles={cycles} running={stripRunning} progress={progress} today={today} queued={queued} loading={loading} selected={selectedCycle} attempted={attemptedCycle}
         disabled={loading || busy || publishBusy || runningBusy} onSelect={selectCycle} />
       {(listFailed || intakeReadFailed) && <p className="ccd-note">Some cycles could not be loaded. <button disabled={busy || loading || publishBusy || runningBusy} onClick={() => void refresh()}>Refresh drafts</button></p>}
       {drafts.length === 100 && <p className="ccd-note">Showing up to 100 drafts. Older drafts may not be listed.</p>}
@@ -1050,6 +1105,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     {opened && <CoachSheetEditorProof key={`${opened.id}:${opened.mount}`} initialDraft={opened.initial} initialClientId={athlete} cycleId={opened.id} clientOptions={[{ id: athlete, name: athleteName }]} localPersistence={false} serverClean={sourceClean} onDraftChange={readOnly ? undefined : draftChanged} onSaveDraft={readOnly ? undefined : save}
       exerciseReference={athleteHistory ? name => <ExercisePastPerformance name={name} state={historyState} layout="table" /> : undefined}
       percentMaxes={percentMaxes} onConvertPercent={readOnly ? undefined : setConversion}
+      onSaveMax={twoScreen && !readOnly && saveProgrammingMaxV1 ? saveTrainingMax : undefined}
       onPublishReady={readOnly ? undefined : running && running.draft_id === opened.id
         ? runningApi ? () => void publishRunning() : undefined
         : nextCycle ? () => { setPublished(''); setPublishRequest(value => value + 1) } : undefined} publishBusy={publishBusy || runningBusy} layout={twoScreen ? 'two-screen' : 'workspace'}
@@ -1062,7 +1118,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       <aside ref={publishSection} className={drawer || betaPublicationPending || Boolean(betaRecoveryError) ? 'ccd-publish ccd-drawer open' : 'ccd-publish ccd-drawer'} aria-label="Publish details" inert={!(drawer || betaPublicationPending || Boolean(betaRecoveryError))}>
         <div className="ccd-drawer-head"><h2>Publish details</h2><button onClick={() => setDrawer(false)}>Back to sheet</button></div>{betaReview ?? <p>Publishing is unavailable for this cycle.</p>}</aside></>}
     {library && libraryClients && <><div className="ccd-scrim open" onClick={() => setLibrary(false)} />
-      <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} erasedApi={erasedAthleteDraftApi} gym={gym} clients={libraryClients} targetName={athleteName} onUse={copyFromLibrary} onClose={() => setLibrary(false)} /></aside></>}
+      <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} erasedApi={erasedAthleteDraftApi} gym={gym} clients={libraryClients} targetName={athleteName} onUse={(record, clientName) => copyFromLibrary(record, clientName, true)} onClose={() => setLibrary(false)} /></aside></>}
     {opened && <div className="ccd-danger-zone"><button className="ccd-quiet ccd-danger" disabled={busy || opened.revision < 1 || hasPending || blocked || Boolean(publicationRecovery) || Boolean(publicationRecoveryError) || betaPublicationPending || Boolean(betaRecoveryError)} onClick={() => void remove()}>{twoScreen ? 'Delete this draft' : 'Delete private draft'}</button>{!twoScreen && <span>{opened.revision ? `Saved revision ${opened.revision}` : 'Not saved yet'}</span>}</div>}
     {templateApi && !readOnly && <details className="ccd-library ccd-templates"><summary>Reusable cycle templates</summary><section aria-label="Reusable cycle templates">
       <h2>Reusable cycle templates</h2><p>Your private templates are available across clients in this gym. Check reusable instructions for client-specific information.</p>

@@ -78,6 +78,38 @@ export function runningCycleProgress(running: Running, draft?: CycleDraft, assig
     workoutsLeft: draftMatches ? workoutsLeft : null }
 }
 
+const loggedDateFormatters = new Map<string | undefined, Intl.DateTimeFormat>()
+
+// Start = earliest completed workout, else earliest in-progress workout, else planned start; finish = latest completed or skipped workout once every week is done; logged timestamps intentionally use the coach's browser time zone (Joe, 2026-11-20).
+export function runningCycleDates(running: Running, progress: ReturnType<typeof runningCycleProgress>, today: string, timeZone?: string) {
+  const finished = progress.weeks > 0 && progress.remainingWeeks?.length === 0
+  let firstCompleted = Infinity
+  let firstInProgress = Infinity
+  let lastDone = -Infinity
+  for (const row of running.done) {
+    if (!row.performed_at) continue
+    const performed = Date.parse(row.performed_at)
+    if (!Number.isFinite(performed)) continue
+    if (row.state === 'completed') firstCompleted = Math.min(firstCompleted, performed)
+    if (row.state === 'in_progress') firstInProgress = Math.min(firstInProgress, performed)
+    else if (finished) lastDone = Math.max(lastDone, performed)
+  }
+
+  let loggedDateLabel = loggedDateFormatters.get(timeZone)
+  if (!loggedDateLabel) {
+    loggedDateLabel = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone })
+    loggedDateFormatters.set(timeZone, loggedDateLabel)
+  }
+  const firstWorkout = Number.isFinite(firstCompleted) ? firstCompleted : firstInProgress
+  const loggedStart = Number.isFinite(firstWorkout)
+  const start = loggedStart ? loggedDateLabel.format(firstWorkout) : dateLabel(running.start_on)
+  const end = Number.isFinite(lastDone) ? loggedDateLabel.format(lastDone) : dateLabel(progress.end)
+  return {
+    start: start && `${loggedStart || running.start_on <= today ? 'Started' : 'Starts'} ${start}`,
+    end: end && `${finished ? 'finished' : 'ends'} ${end}`,
+  }
+}
+
 function rangeLabel(start?: string, end?: string) {
   if (!start || !end) return dateLabel(start)
   return `${dateLabel(start)} – ${start.slice(0, 7) === end.slice(0, 7) ? Number(end.slice(8)) : dateLabel(end)}`
@@ -86,10 +118,18 @@ function rangeLabel(start?: string, end?: string) {
 type CycleCard = { label?: string; title: string; detail?: string; selection: CycleSelection }
 const weekLabel = (weeks: number) => `${weeks} ${weeks === 1 ? 'week' : 'weeks'}`
 
-export function CoachCycleStrip({ cycles, running, progress, queued, loading = false, selected, attempted, disabled, onSelect }: {
+function runningCycleDetail(running: Running, progress: ReturnType<typeof runningCycleProgress>, today: string) {
+  const { start, end } = runningCycleDates(running, progress, today)
+  const done = progress.weeksDone !== null ? `${progress.weeksDone} of ${weekLabel(progress.weeks)} done`
+    : progress.workoutsLeft === null ? '' : `${progress.workoutsLeft} workout${progress.workoutsLeft === 1 ? '' : 's'} left`
+  return [start, end, done].filter(Boolean).join(' · ')
+}
+
+export function CoachCycleStrip({ cycles, running, progress, today, queued, loading = false, selected, attempted, disabled, onSelect }: {
   cycles: ReturnType<typeof classifyCycles>
   running: Running | null
   progress?: ReturnType<typeof runningCycleProgress> | null
+  today: string
   queued?: Queued | null
   loading?: boolean
   selected?: CycleSelection
@@ -111,8 +151,7 @@ export function CoachCycleStrip({ cycles, running, progress, queued, loading = f
     })),
     ...(current && running && progress ? [{
       label: 'Now', title: running.program_name,
-      detail: [rangeLabel(running.start_on, progress.end), progress.workoutsLeft === null ? '' :
-        `${progress.workoutsLeft} workout${progress.workoutsLeft === 1 ? '' : 's'} left`].filter(Boolean).join(' · '),
+      detail: runningCycleDetail(running, progress, today),
       selection: { kind: 'current' as const, draftId: current.draft_id },
     }] : []),
     ...orderedNext.map(draft => {

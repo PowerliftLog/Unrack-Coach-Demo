@@ -40,8 +40,10 @@
 .ccd-library-list li>div{display:grid;gap:2px;min-width:0}
 .ccd-library-list strong{font-size:15px}
 .ccd-library-list span{font-size:12px;color:#4f625c}
-.ccd-library-list small{font-size:11px;color:#7b8c87}
+.ccd-library-peek{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-muted)}
 .ccd-library-list .button{flex:none;font-size:12px;padding:9px 12px}
+.ccd-library-fold{justify-self:start;padding:0 4px;font:inherit;font-size:13px;border:0;background:transparent;color:var(--text-muted);cursor:pointer}
+.ccd-library-group-title{margin:0;font-size:13px;color:var(--text-muted)}
 .ccd-running { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line, #d6d3cd); border-radius: 8px; background: var(--surface-2, #f5f4f1); font-size: 14px; }
 .ccd-running p { margin: 2px 0; }
 .ccd-running-warn { color: #8a5a00; }

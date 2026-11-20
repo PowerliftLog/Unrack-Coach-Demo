@@ -1,25 +1,36 @@
 import type { AthleteTrackingV1, ProgrammingMaxesV1, ProgrammingMaxRecordV1 } from './coach-api'
 import type { CoachSheetSetGroup, CoachWeightUnit } from './coach-sheet-interpret'
 
-export type PercentMax = Pick<ProgrammingMaxRecordV1, 'exercise_id' | 'value' | 'unit' | 'max_type'> & { name: string }
+export type PercentMax = Pick<ProgrammingMaxRecordV1, 'exercise_id' | 'value' | 'unit' | 'max_type'> & { name: string; matchedByAlias?: true }
 export type PercentMaxResolver = {
   maxes: PercentMax[]
   resolve(name: string, basisId?: string): PercentMax | undefined
+  suggest(name: string, basisId?: string): PercentMax | undefined
+  exerciseId(name: string): string | undefined
 }
 
 export const percentExerciseKey = (name: string) => name.trim().toLowerCase()
 export const percentConversionLabel = (unit: CoachWeightUnit) => `Convert % to ${unit}`
 
-const liftAliases = new Map([
+export function maxTypeLabel(type: 'tested_1rm' | 'training_max') {
+  return type === 'tested_1rm' ? 'Tested 1RM' : 'Training max'
+}
+
+const liftAliases = [
   ['back squat', 'squat'], ['squat', 'squat'],
   ['bench press', 'bench'], ['bench', 'bench'],
   ['deadlift', 'deadlift'], ['conventional deadlift', 'deadlift'],
-])
+] as const
+const extraLiftAliases = [
+  ['barbell squat', 'squat'], ['high bar squat', 'squat'], ['low bar squat', 'squat'],
+  ['barbell bench press', 'bench'], ['flat bench press', 'bench'], ['competition bench', 'bench'],
+  ['barbell deadlift', 'deadlift'], ['competition deadlift', 'deadlift'],
+] as const
 
 export function createPercentMaxResolver(
   { maxes, basis_options }: Pick<ProgrammingMaxesV1, 'maxes' | 'basis_options'>,
   tracking: AthleteTrackingV1,
-  includeBasisNames = true,
+  expandedMatching = true,
 ): PercentMaxResolver {
   const tracked = [...tracking.effective, ...tracking.system_required]
   const names = new Map([...basis_options, ...tracked].map(item => [item.exercise_id, item.name]))
@@ -36,28 +47,42 @@ export function createPercentMaxResolver(
     const name = percentExerciseKey(exercise.name)
     if (latest.has(exercise.exercise_id) && !namedIds.has(name)) namedIds.set(name, exercise.exercise_id)
   }
-  const lifts = new Map<string, string>(tracking.system_required.map(item => [item.lift, item.exercise_id]))
-  for (const [alias, lift] of liftAliases) {
-    const id = lifts.get(lift)
-    if (id !== undefined && latest.has(id) && !namedIds.has(alias)) namedIds.set(alias, id)
-  }
-  if (includeBasisNames) {
+  if (expandedMatching) {
     for (const exercise of basis_options) {
       const name = percentExerciseKey(exercise.name)
       if (latest.has(exercise.exercise_id) && !namedIds.has(name)) namedIds.set(name, exercise.exercise_id)
     }
   }
+  const exerciseIds = new Map<string, string>()
+  const archivedIds = new Set(basis_options.filter(option => option.archived_at).map(option => option.exercise_id))
+  for (const exercise of [...tracked, ...basis_options]) {
+    const key = percentExerciseKey(exercise.name)
+    if (!archivedIds.has(exercise.exercise_id) && !exerciseIds.has(key)) exerciseIds.set(key, exercise.exercise_id)
+  }
+  const lifts = new Map<string, string>(tracking.system_required.map(item => [item.lift, item.exercise_id]))
+  const aliases = new Map<string, string>(expandedMatching ? [...liftAliases, ...extraLiftAliases] : liftAliases)
   const options = [...latest.values()].map(({ exercise_id, value, unit, max_type }) => ({
     exercise_id, value, unit, max_type, name: names.get(exercise_id) ?? exercise_id,
   })).sort((a, b) => a.name.localeCompare(b.name))
   const byId = new Map(options.map(max => [max.exercise_id, max]))
+  const competitionMax = (lift: string) => byId.get(lifts.get(lift) ?? '')
   return {
     maxes: options,
     resolve(name, basisId) {
       if (basisId !== undefined) return byId.get(basisId)
-      const id = namedIds.get(percentExerciseKey(name))
-      return id === undefined ? undefined : byId.get(id)
+      const key = percentExerciseKey(name)
+      const exact = byId.get(namedIds.get(key) ?? '')
+      if (exact) return exact
+      const alias = competitionMax(aliases.get(key) ?? '')
+      return alias && { ...alias, matchedByAlias: true }
     },
+    suggest(name, basisId) {
+      const key = percentExerciseKey(name)
+      if (!expandedMatching || basisId !== undefined || namedIds.has(key) || aliases.has(key)) return undefined
+      const words = new Set(key.match(/\b(?:squat|bench|deadlift)\b/g))
+      if (words.size === 1) return competitionMax([...words][0])
+    },
+    exerciseId: name => exerciseIds.get(percentExerciseKey(name)),
   }
 }
 

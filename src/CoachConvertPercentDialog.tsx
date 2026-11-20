@@ -16,6 +16,7 @@ export type PercentConversion = Pick<PercentCell, 'row' | 'column'> & { text: st
 export type PercentConversionRequest = {
   cells: PercentCell[]
   unit: CoachWeightUnit
+  legacyCopy?: boolean
   apply(conversions: PercentConversion[]): void
 }
 
@@ -24,11 +25,15 @@ const loadIsValid = (value: string) => /^\d+(?:\.\d{1,3})?$/.test(value) && Numb
 const location = (cell: PercentCell) => `${cell.day} · ${cell.exercise} · W${cell.week}`
 const withWeights = (loads: PercentLoad[], weights: string[]) => loads.map((load, i) => ({ ...load, weight: Number(weights[i]) }))
 
-export function CoachConvertPercentDialog({ cells, unit, apply, onClose }: PercentConversionRequest & { onClose(): void }) {
+export function CoachConvertPercentDialog({ cells, unit, legacyCopy = false, apply, onClose }: PercentConversionRequest & { onClose(): void }) {
   const titleId = useId()
   const [rows, setRows] = useState(() => cells.flatMap(cell => 'loads' in cell
     ? [{ cell, include: true, weights: cell.loads.map(load => String(load.weight)) }] : []))
   const left = cells.filter(cell => 'reason' in cell)
+  const nothingToConvert = !legacyCopy && rows.length === 0
+  const leftDetails = [...new Set(left.map(cell => legacyCopy ? `${location(cell)}: ${cell.reason}`
+    : cell.reason === 'workout is locked' ? `W${cell.week} is already done and stays as it is`
+    : `${cell.exercise}${nothingToConvert ? '' : ` · W${cell.week}`} needs a max`))]
   const included = rows.filter(row => row.include)
   const invalid = included.some(row => !row.weights.every(loadIsValid))
   const update = (index: number, change: Partial<(typeof rows)[number]>) => {
@@ -63,14 +68,16 @@ export function CoachConvertPercentDialog({ cells, unit, apply, onClose }: Perce
           </tr>
         })}</tbody>
       </table>}
-      {left.length > 0 && <p>Left as %: {left.map(cell => `${location(cell)}: ${cell.reason}`).join(', ')}</p>}
+      {nothingToConvert
+        ? <p>Nothing to convert yet{leftDetails.length > 0 && `: ${leftDetails.join('. ')}`}.</p>
+        : leftDetails.length > 0 && <p>Left as %: {leftDetails.join(legacyCopy ? ', ' : '. ')}{!legacyCopy && '.'}</p>}
       {invalid && <p role="status">Use a load from 0.001 to 9,999,999.999 with up to three decimal places.</p>}
       <div className="dialog-actions">
-        <button className="button outline" onClick={onClose}>Cancel</button>
-        <button className="button primary" disabled={!included.length || invalid} onClick={() => apply(included.map(({ cell, weights }) => ({
+        <button className="button outline" onClick={onClose}>{nothingToConvert ? 'Close' : 'Cancel'}</button>
+        {!nothingToConvert && <button className="button primary" disabled={!included.length || invalid} onClick={() => apply(included.map(({ cell, weights }) => ({
           row: cell.row, column: cell.column,
           text: rewritePercentPrescription(cell.raw, withWeights(cell.loads, weights), unit),
-        })))}>Convert {included.length}</button>
+        })))}>{included.length || legacyCopy ? `Convert ${included.length}` : 'Convert'}</button>}
       </div>
     </div>
   </ModalDialog>

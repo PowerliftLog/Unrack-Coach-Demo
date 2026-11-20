@@ -413,7 +413,7 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
           previewV2AdmissionVersion={cyclePreviewV2AdmissionVersion} ownerSubject={cycleOwnerSubject}
           gym={gym} athlete={target.athlete} athleteName={target.name} currentProgram={target.currentProgram}
           athleteHistory={api.getCoachAthleteExerciseHistoryV1} draftNames autoOpen openProgram={target.openProgram}
-          getProgrammingMaxesV1={api.getProgrammingMaxesV1} getAthleteTrackingV1={api.getAthleteTrackingV1}
+          getProgrammingMaxesV1={api.getProgrammingMaxesV1} saveProgrammingMaxV1={api.saveProgrammingMaxV1} getAthleteTrackingV1={api.getAthleteTrackingV1}
           erasedAthleteDraftApi={api} libraryClients={clients.map(item => ({ id: item.athlete_id, name: item.roster_name }))}
           {...(inShell ? {
             layout: 'two-screen' as const, navigationRef: shellBuilder,

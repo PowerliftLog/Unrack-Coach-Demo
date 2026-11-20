@@ -99,6 +99,25 @@ export function extractCoachCycleTemplate(source: CoachCycleDraftSource): CoachC
   return result
 }
 
+/** First named exercise blocks in training-day order, with their literal week-one prescriptions. */
+export function coachCycleTemplatePeek(source: CoachCycleDraftSource): string {
+  let template: CoachCycleTemplate
+  try {
+    template = extractCoachCycleTemplate(source)
+  } catch {
+    // A source that cannot be extracted can still be listed and handled by the existing copy flow.
+    return ''
+  }
+  const exercises = template.days.flatMap(day => day.exercises)
+    .filter(exercise => exercise.name.trim() || exercise.weeks.some(week => week.exercise?.trim()))
+  const peek = exercises.slice(0, 3).map(exercise => {
+    const weekOne = [exercise.name.trim(), exercise.weeks[0].prescription.trim()].filter(Boolean).join(' ')
+    const switches = exercise.weeks.flatMap((week, index) => week.exercise?.trim() ? [`W${index + 1} ${week.exercise.trim()}`] : [])
+    return [weekOne, ...switches].filter(Boolean).join(' → ')
+  }).join(' · ')
+  return exercises.length > 3 ? `${peek} …` : peek
+}
+
 export function isCoachCycleTemplate(value: unknown): value is CoachCycleTemplate {
   if (!object(value) || !exact(value, ['format', 'name', 'weeks', 'unit', 'days']) || value.format !== 'unrack-cycle-template-v1'
     || typeof value.name !== 'string' || !value.name.trim() || value.name !== value.name.trim() || [...value.name].length > 120
