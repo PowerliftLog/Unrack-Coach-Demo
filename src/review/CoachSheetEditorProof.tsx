@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Workbook, type WorkbookInstance } from '@fortune-sheet/react'
 import type { Cell, Sheet, Hooks } from '@fortune-sheet/core'
 import { CoachCycleInterpretationPanel } from '../CoachCycleInterpretationPanel'
@@ -6,6 +6,8 @@ import { interpretCoachSheetDraft, type CoachGeneratedSheetInterpretation } from
 import { compileCoachCycleDestination, compileCoachCycleDestinationV2, compileCoachCycleSchedule, compileCoachCycleScheduleV2, type CoachCycleDestinationIssue, type CoachCycleDestinationScheduleV2 } from '../lib/coach-cycle-destination'
 import { COACH_CYCLE_PUBLISH_LIMITS } from '../lib/coach-cycle-limits'
 import { prescriptionAdvice } from '../lib/coach-prescription-advice'
+import { percentConversionLabel, percentExerciseKey, percentLoads, type PercentMaxResolver } from '../lib/coach-percent-resolution'
+import type { PercentCell, PercentConversionRequest } from '../CoachConvertPercentDialog'
 import '@fortune-sheet/react/dist/index.css'
 import './coach-sheet-editor-proof.css'
 
@@ -253,9 +255,10 @@ export function blockAt(intake: Intake, counts: Record<string, number>, row: num
   return block < (counts[day] || 0) ? { day, block, week: Math.max(0, position - 1) } : null
 }
 
-export type SheetFlag = { row: number; column: number; kind: 'bad' | 'missing' | 'unclear'; label: string; message: string; suggestion?: string }
-export type SheetFlags = { flags: SheetFlag[]; emptySlots: number; other: string[] }
-function cellIndex(address: string): { row: number; column: number } | null {
+export type SheetFlag = { row: number; column: number; kind: 'bad' | 'missing' | 'unclear' | 'yellow'; label: string; message: string; suggestion?: string; percent?: 'ready' | 'missing'; explanation?: string }
+export type SheetFlags = { flags: SheetFlag[]; emptySlots: number; other: string[]; percentCells: PercentCell[] }
+type CellPosition = { row: number; column: number }
+function cellIndex(address: string): CellPosition | null {
   const match = /^([A-Z]+)([1-9]\d*)$/.exec(address)
   if (!match) return null
   let column = 0
@@ -265,20 +268,65 @@ function cellIndex(address: string): { row: number; column: number } | null {
 /** Live sheet check (Joe, Nov 16 review 3): what the interpreter cannot read, by cell.
  * Text it can't read is "bad"; a blank cell in an exercise that has other content is "missing";
  * an exercise slot with nothing in it is counted, not painted, so a fresh sheet stays clean. */
-export function sheetFlags(intake: Intake, counts: Record<string, number>, blockIds: BlockIds, sheets: Sheet[], cycleId: string, switches?: Switches): SheetFlags {
+export function sheetFlags(intake: Intake, counts: Record<string, number>, blockIds: BlockIds, sheets: Sheet[], cycleId: string, switches?: Switches, percent?: {
+  resolver: PercentMaxResolver
+  basis: ReadonlyMap<string, string>
+  locked(row: number, column: number): boolean
+}): SheetFlags {
   const result = interpretCoachSheetDraft({ intake, counts, blockIds, sheets: cloneSheets(sheets), ...(switches && Object.keys(switches).length ? { switches } : {}) }, { cycleId })
   const compiled = result.status === 'ready_for_review' ? compileCoachCycleDestination(result, intake) : null
-  const issues: { message: string; source?: { address: string } }[] = [...result.issues, ...(compiled?.issues ?? [])]
+  const issues = [...result.issues, ...(compiled?.issues ?? [])]
   const matrix = sheetMatrix(sheets[0])
   const text = (row: number, column: number) => String(matrix[row]?.[column]?.v ?? '').trim()
   // The exercise a week runs: the nearest name at or above it in the block, so a lift swapped
   // mid-cycle (W1–2 Bench Press, W3–4 Close-Grip Bench) labels its own weeks (Joe, Nov 18).
   const nameFor = (first: number, row: number, column: number) => { for (let at = row; at >= first; at--) if (text(at, column)) return text(at, column); return '' }
   const flags: SheetFlag[] = [], other: string[] = [], empty = new Set<string>(), seen = new Set<string>()
+  const percentages = new Map<string, { cell: PercentCell; flag: SheetFlag }>()
+  if (percent) for (const day of result.days) for (const exercise of day.exercises) {
+    let name = exercise.name.trim()
+    for (const slot of exercise.weeks) {
+      if (slot.renamed) name = slot.renamed.name.trim()
+      const group = slot.prescription.groups.find(item => item.load.kind === 'percentage')
+      const source = group?.source
+      const at = source && cellIndex(source.address)
+      if (!source || !at || matrix[at.row]?.[at.column]?.f) continue
+      const block = blockAt(intake, counts, at.row, at.column)
+      if (!block) continue
+      const label = flagLabel(intake, block, at.row, at.column, name)
+      const displayName = name || `Exercise ${block.block + 1}`
+      const cell = { ...at, day: day.name, exercise: displayName, week: slot.week, raw: slot.prescription.raw }
+      const max = percent.resolver.resolve(name, percent.basis.get(percentExerciseKey(name)))
+      if (percent.locked(at.row, at.column)) {
+        percentages.set(source.address, { cell: { ...cell, reason: 'workout is locked' }, flag: { ...at, label, kind: 'bad', message: 'Workout is locked.' } })
+      } else if (max) {
+        const loads = percentLoads(slot.prescription.groups, max, intake.unit)
+        if (!loads.length) continue
+        const equation = loads.map(load => `${load.percent}% of ${max.value} ${max.unit} = ${load.weight} ${intake.unit}`).join(' · ')
+        percentages.set(source.address, { cell: { ...cell, loads }, flag: {
+          ...at, label, kind: 'yellow', percent: 'ready',
+          message: `${max.name} max ${max.value} ${max.unit} found. Use ${percentConversionLabel(intake.unit)} to apply.`,
+          explanation: `${equation}. Press ${percentConversionLabel(intake.unit)} to apply.`,
+        } })
+      } else {
+        percentages.set(source.address, { cell: { ...cell, reason: 'no max found' }, flag: {
+          ...at, label, kind: 'bad', percent: 'missing',
+          message: "No max found. Set one in Profile → Maxes, or pick 'Based on' in the exercise card.",
+        } })
+      }
+    }
+  }
   for (const issue of issues) {
     const at = issue.source ? cellIndex(issue.source.address) : null
     const block = at ? blockAt(intake, counts, at.row, at.column) : null
     if (!at || !block) { if (!other.includes(issue.message)) other.push(issue.message); continue }
+    const percentage = issue.source && percentages.get(issue.source.address)
+    if (percentage) {
+      if ('code' in issue && issue.code === 'percentage_resolution_required') continue
+      const message = `${percentage.flag.label}: ${issue.message}`
+      if (!other.includes(message)) other.push(message)
+      continue
+    }
     const key = `${at.row}:${at.column}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -291,32 +339,37 @@ export function sheetFlags(intake: Intake, counts: Record<string, number>, block
   }
   // Prescription advice: a clearer message and a suggested rewrite for rejected cells, and a flag for
   // accepted cells whose meaning is unclear (a bare @ 1–5). It never makes a cell publishable.
+  const percentCells = [...percentages.values()].map(({ cell }) => cell)
+  const percentPositions = new Set(percentCells.map(({ row, column }) => `${row}:${column}`))
   for (const [dayIndex, day] of intake.days.entries()) for (let block = 0; block < (counts[day] || 0); block++) for (let week = 0; week < intake.weeks; week++) {
     const row = 2 + block * (intake.weeks + 1) + week, column = dayIndex * 5 + 2, value = text(row, column)
+    if (percentPositions.has(`${row}:${column}`)) continue
     const advice = value ? prescriptionAdvice(value, intake.unit) : null
     if (!advice) continue
     const existing = flags.find(flag => flag.row === row && flag.column === column)
     if (existing) Object.assign(existing, { kind: advice.kind, message: advice.message, suggestion: advice.suggestion })
     else flags.push({ row, column, kind: advice.kind, label: flagLabel(intake, { day, block, week }, row, column, nameFor(2 + block * (intake.weeks + 1), row, dayIndex * 5 + 1)), message: advice.message, suggestion: advice.suggestion })
   }
+  for (const { flag } of percentages.values()) flags.push(flag)
   flags.sort((a, b) => a.column - b.column || a.row - b.row)
-  return { flags, emptySlots: empty.size, other }
+  return { flags, emptySlots: empty.size, other, percentCells }
 }
 function flagLabel(intake: Intake, block: BlockSelection, row: number, column: number, name: string) {
   const first = 2 + block.block * (intake.weeks + 1)
   return `${block.day.slice(0, 3)} · ${name || `Exercise ${block.block + 1}`} · ${column % 5 === 1 ? 'name' : `W${row - first + 1}`}`
 }
-export const flagFill = { bad: '#ffd3cc', missing: '#fff0b8', unclear: '#fff0b8' } as const
+export const flagFill = { bad: '#ffd3cc', missing: '#fff0b8', unclear: '#fff0b8', yellow: '#fff0b8' } as const
 // Drafts saved before Nov 18 can carry a flag's paint as a cell fill; it is never a real source fill.
 const flagFills = new Set<string>(Object.values(flagFill))
 function sourceFill(bg: unknown): string | undefined { return typeof bg === 'string' && !flagFills.has(bg.toLowerCase()) ? bg : undefined }
 function withoutFlagFill(value: Cell): Cell { if (sourceFill(value.bg) || value.bg == null) return value; const { bg: _flag, ...rest } = value; return rest }
-const flagTitle = { bad: "Can't read", missing: 'Empty', unclear: 'Unclear' } as const
+const flagTitle = { bad: "Can't read", missing: 'Empty', unclear: 'Unclear', yellow: 'Ready to convert' } as const
+const flagClassName = (flag: SheetFlag) => flag.kind === 'yellow' ? 'yellow unclear' : flag.kind
 /** Why the selected cell's exercise is flagged, in the flag's own colour (Joe, Nov 18). */
 export function FlagExplanation({ flag, onGo }: { flag: SheetFlag; onGo(): void }) {
   const message = flag.kind === 'missing' ? flag.message.replace(/^Empty\.\s*/, '') : flag.message
-  return <span className={`cse-hint-flag ${flag.kind}`} role="status" aria-live="polite">
-    <b>{flagTitle[flag.kind]}</b> <button type="button" onClick={onGo}>{flag.label}</button>: {message}
+  return <span className={`cse-hint-flag ${flagClassName(flag)}`} role="status" aria-live="polite">
+    {!flag.percent && <b>{flagTitle[flag.kind]} </b>}<button type="button" onClick={onGo}>{flag.label}</button>: {flag.explanation ?? message}
     {flag.suggestion && <> Try <code>{flag.suggestion}</code>.</>}
   </span>
 }
@@ -374,6 +427,8 @@ export type CoachSheetEditorProps = {
   publishBusy?: boolean
   /** Reference for the selected exercise (e.g. the athlete's past performance), shown in the sidebar. */
   exerciseReference?: (exerciseName: string) => ReactNode
+  percentMaxes?: PercentMaxResolver
+  onConvertPercent?: (request: PercentConversionRequest) => void
   /** A running program: workouts already done, by day and 1-based week. Their rows are read-only,
    * and renaming an exercise that has done weeks changes only the weeks still to come. */
   completedWorkouts?: { day: string; week: number }[]
@@ -381,11 +436,45 @@ export type CoachSheetEditorProps = {
   exerciseByWeek?: boolean
   /** 'workspace' (the connected Coach builder): full-width sheet, cycle settings folded away, the
    * selected exercise in a corner card instead of a sidebar, and one Check & publish button. */
-  layout?: 'classic' | 'workspace'
+  layout?: 'classic' | 'workspace' | 'two-screen'
+  toolbarRef?: Ref<CoachSheetActions>
+  onToolbarState?: (state: CoachSheetToolbarState | null) => void
+  readOnly?: boolean
+  onBuildDraft?: (draft: CoachSheetDraft) => void
+  intakeDisabled?: boolean
 }
 
-export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false }: CoachSheetEditorProps = {}) {
-  const workspace = layout === 'workspace'
+export type CoachSheetActions = {
+  openSettings(): void
+  jumpToDay(index: number): void
+  zoom(direction: -1 | 1): void
+  openPastWeights(): void
+  openConvert(): void
+  save(): Promise<boolean>
+  publish(): Promise<void>
+}
+
+export type CoachSheetToolbarState = {
+  zoom: number
+  days: string[]
+  unit: Intake['unit']
+  settingsOpen: boolean
+  dirty: boolean
+  saving: boolean
+  publishing: boolean
+  problemCount: number
+  readyCount: number
+  hasPercentCells: boolean
+  selectedExercise: string
+  pastWeightsOpen: boolean
+  canPublish: boolean
+  publishBlocked: boolean
+}
+
+export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, percentMaxes, onConvertPercent, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false, toolbarRef, onToolbarState, readOnly: locked = false, onBuildDraft, intakeDisabled = false }: CoachSheetEditorProps = {}) {
+  const twoScreen = layout === 'two-screen'
+  const workspace = layout !== 'classic'
+  const readOnly = twoScreen && locked
   const statusRef = useRef<HTMLDivElement>(null)
   const [publishing, setPublishing] = useState(false)
   // A mounted editor owns one draft. Remount with a new key to switch clients/drafts.
@@ -402,6 +491,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       ? saved : initialBlockIds(shape, sizes)
   })
   const [switches, setSwitches] = useState<Switches>(() => previous.current?.switches ?? {})
+  const [percentBasis, setPercentBasis] = useState(() => new Map<string, string>())
   const starts = useMemo(() => nameStarts(activeIntake, blockIds, switches), [activeIntake, blockIds, switches])
   const doneWeeks = useMemo(() => new Set((completedWorkouts ?? []).map(item => `${item.day}:${item.week}`)), [completedWorkouts])
   const weekDone = (day: string, week: number) => doneWeeks.has(`${day}:${week}`)
@@ -417,7 +507,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   }
   const [selection, setSelection] = useState<BlockSelection | null>(null)
   // The selected cell, so the toolbar can explain a flag on it (Joe, Nov 18).
-  const [activeCell, setActiveCell] = useState<{ row: number; column: number } | null>(null)
+  const [activeCell, setActiveCell] = useState<CellPosition | null>(null)
   // Workspace card: shows on every selection change, hides while the coach types or on ×.
   const [cardOpen, setCardOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -434,9 +524,8 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const [zoom, setZoom] = useState(0.6)
   const workbook = useRef<WorkbookInstance>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  // Block actions and zoom remount the engine, which resets its scroll to row 1. Keep the
-  // coach's place: capture the grid scroll before a remount and restore it afterwards.
-  const pendingView = useRef<{ top: number; left: number } | null>(null)
+  // Block actions and zoom remount the engine. Restore the scroll position or reveal an inserted exercise.
+  const pendingView = useRef<{ top: number; left: number } | CellPosition | null>(null)
   function keepView(scale = 1) {
     const bar = (axis: 'x' | 'y') => gridRef.current?.querySelector<HTMLElement>(`.luckysheet-scrollbar-${axis}`)
     pendingView.current = { top: (bar('y')?.scrollTop ?? 0) * scale, left: (bar('x')?.scrollLeft ?? 0) * scale }
@@ -445,32 +534,41 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     const view = pendingView.current
     if (!view) return
     pendingView.current = null
-    // The remounted engine may take several frames to size its scroll area. Wait until it
-    // can reach the saved position, then check on the next frame that the restore stuck.
-    const top = Math.round(view.top), left = Math.round(view.left)
+    // The remounted engine may take several frames to size its scroll area.
     const deadline = performance.now() + 3000
     let applied = false
     // The engine has no ready hook, so poll each frame. The coach's own wheel, click or key wins.
     const listening = new AbortController()
     const stop = () => { cancelAnimationFrame(frame); listening.abort() }
     for (const name of ['wheel', 'pointerdown', 'keydown']) gridRef.current?.addEventListener(name, stop, { capture: true, passive: true, signal: listening.signal })
-    function restore() {
+    const restore = () => {
       const late = performance.now() >= deadline
       try {
         const x = gridRef.current?.querySelector<HTMLElement>('.luckysheet-scrollbar-x')
         const y = gridRef.current?.querySelector<HTMLElement>('.luckysheet-scrollbar-y')
-        if (x && y) {
-          if (applied && Math.abs(y.scrollTop - top) <= 1 && Math.abs(x.scrollLeft - left) <= 1) return stop()
-          applied = false
-          // At the deadline the sheet may simply be shorter now: go as far as it reaches.
-          if (workbook.current && (late || (top === 0 || y.scrollHeight - y.clientHeight >= top)
-            && (left === 0 || x.scrollWidth - x.clientWidth >= left))) {
-            workbook.current.scroll({ scrollTop: Math.min(top, Math.max(0, y.scrollHeight - y.clientHeight)), scrollLeft: Math.min(left, Math.max(0, x.scrollWidth - x.clientWidth)) })
-            // The engine redraws from its scroll handler; a programmatic scrollTop alone may not reach it.
-            x.dispatchEvent(new Event('scroll'))
-            y.dispatchEvent(new Event('scroll'))
-            applied = true
-            if (late) return stop()
+        if (x && y && workbook.current) {
+          if ('row' in view) {
+            // FortuneSheet sizes these spacers when the row and column coordinates are ready.
+            const width = Number.parseFloat(x.querySelector('div')?.style.width ?? '')
+            const height = Number.parseFloat(y.querySelector('div')?.style.height ?? '')
+            if (width > 0 && height > 0) {
+              goToCell(view.row, view.column)
+              return stop()
+            }
+          } else {
+            const top = Math.round(view.top), left = Math.round(view.left)
+            if (applied && Math.abs(y.scrollTop - top) <= 1 && Math.abs(x.scrollLeft - left) <= 1) return stop()
+            applied = false
+            // At the deadline the sheet may simply be shorter now: go as far as it reaches.
+            if (late || (top === 0 || y.scrollHeight - y.clientHeight >= top)
+              && (left === 0 || x.scrollWidth - x.clientWidth >= left)) {
+              workbook.current.scroll({ scrollTop: Math.min(top, Math.max(0, y.scrollHeight - y.clientHeight)), scrollLeft: Math.min(left, Math.max(0, x.scrollWidth - x.clientWidth)) })
+              // The engine redraws from its scroll handler; a programmatic scrollTop alone may not reach it.
+              x.dispatchEvent(new Event('scroll'))
+              y.dispatchEvent(new Event('scroll'))
+              applied = true
+              if (late) return stop()
+            }
           }
         }
       } catch { /* A view restore never blocks editing. */ }
@@ -519,6 +617,23 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     observer?.observe(document.body)
     return () => { window.removeEventListener('resize', fit); observer?.disconnect() }
   }, [workspace, Boolean(sheets)]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!twoScreen || !grid || typeof ResizeObserver === 'undefined') return
+    let width = grid.getBoundingClientRect().width
+    let frame = 0
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry || entry.contentRect.width === width) return
+      width = entry.contentRect.width
+      if (!frame) frame = requestAnimationFrame(() => {
+        frame = 0
+        // FortuneSheet listens for window resize to remeasure and repaint its canvas.
+        window.dispatchEvent(new Event('resize'))
+      })
+    })
+    observer.observe(grid)
+    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame) }
+  }, [twoScreen, Boolean(sheets)]) // eslint-disable-line react-hooks/exhaustive-deps
   function jumpToDay(index: number) {
     try { workbook.current?.scroll({ targetColumn: index * 5 }) } catch { /* Jumping never blocks editing. */ }
   }
@@ -544,10 +659,10 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   // FortuneSheet effects depend on both callback identities. Keep these stable
   // across status/source-state renders to avoid an onChange feedback loop.
   const editorHooks = useMemo<Hooks>(() => ({
-        beforeUpdateCell: (row, column) => editableCell(activeIntake, counts, row, column, starts) && !lockedCell(row, column),
+        beforeUpdateCell: (row, column) => !readOnly && editableCell(activeIntake, counts, row, column, starts) && !lockedCell(row, column),
         beforePaste: (selection, content) => {
           const range = selection?.[0]
-          if (!range || typeof content !== 'string') return false
+          if (readOnly || !range || typeof content !== 'string') return false
           const lines = content.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n')
           const height = Math.max(lines.length, range.row[1] - range.row[0] + 1)
           const width = Math.max(...lines.map(line => line.split('\t').length), range.column[1] - range.column[0] + 1)
@@ -564,10 +679,17 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
           if (row != null && column != null) queueMicrotask(() => setActiveCell({ row, column }))
           // The past-weights card is for the exercise itself: only its name column opens it.
           if (next) queueMicrotask(() => { setSelection(next); setCardOpen(column % 5 === 1) })
+          else if (twoScreen && row != null && column != null) queueMicrotask(() => { setSelection(null); setCardOpen(false) })
         },
-      }), [activeIntake, counts, starts]) // eslint-disable-line react-hooks/exhaustive-deps
+      }), [activeIntake, counts, starts, readOnly, twoScreen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function start() {
+    if (readOnly || (twoScreen && intakeDisabled)) return
+    if (twoScreen && onBuildDraft) {
+      const counts = initialCounts(intake)
+      onBuildDraft({ format: 'unrack-generated-cycle-v1', intake, counts, blockIds: initialBlockIds(intake, counts), sheets: generate(intake, counts) })
+      return
+    }
     if (sheets && !window.confirm('Replace this worksheet with a blank template? Save your current draft first to keep it.')) return
     setReview(null)
     setDestinationIssues([])
@@ -586,8 +708,9 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     setMessage('Blank worksheet created. Select a cell and type or paste.')
   }
 
-  function replaceSheet(next: Sheet[], status: string) {
-    keepView()
+  function replaceSheet(next: Sheet[], status: string, focus?: CellPosition) {
+    if (focus) pendingView.current = focus
+    else keepView()
     setReview(null)
     setDestinationIssues([])
     current.current = cloneSheets(next)
@@ -620,8 +743,9 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     setBlockIds(nextBlocks)
     setCounts(nextCounts)
     const target = action === 'add' ? index + 1 : action === 'up' ? index - 1 : action === 'down' ? index + 1 : Math.min(index, nextIds.length - 1)
-    setSelection({ day, block: target, week: selection?.week ?? 0 })
-    replaceSheet(next, `${day} exercise ${action === 'add' ? 'added' : action === 'remove' ? 'removed' : 'moved'}. All week entries stay with their exercise.`)
+    const focus = action === 'add' ? { row: blockRow(day, target, 0), column: activeIntake.days.indexOf(day) * 5 + 1 } : undefined
+    setSelection({ day, block: target, week: focus ? 0 : selection?.week ?? 0 })
+    replaceSheet(next, `${day} exercise ${action === 'add' ? 'added' : action === 'remove' ? 'removed' : 'moved'}. All week entries stay with their exercise.`, focus)
   }
   function blockRow(day: string, block: number, week: number) { return 2 + block * (activeIntake.weeks + 1) + week }
   function blockName(day: string, block: number) {
@@ -698,6 +822,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     replaceSheet(next, `${blockName(day, block)} W${week + 1} skipped. Instructions kept; Unskip restores the prescription.`)
   }
   const acceptChange = useCallback((updated: Sheet[]) => {
+    if (readOnly) return
     if (!validStructure(activeIntake, counts, updated, starts)) {
       queueMicrotask(() => {
         keepView()
@@ -722,16 +847,24 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     current.current = cloneSheets(next)
     queueMicrotask(() => { setDirty(true); setReview(null); setDestinationIssues([]); setSourceRevision(value => value + 1) })
     queueMicrotask(() => growRows(next[0]))
-  }, [activeIntake, counts, starts, doneWeeks, blockIds, switches]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeIntake, counts, starts, doneWeeks, blockIds, switches, readOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Workspace: check the sheet every time an edit lands (the engine reports edits when the coach
   // leaves a cell) and paint what can't be read. Paint is display-only: savedShape ignores fills.
-  const [check, setCheck] = useState<SheetFlags>({ flags: [], emptySlots: 0, other: [] })
+  const [check, setCheck] = useState<SheetFlags>({ flags: [], emptySlots: 0, other: [], percentCells: [] })
+  const latestFlags = useRef(check.flags)
+  latestFlags.current = check.flags
   const painted = useRef(new Map<string, string>())
+  const readCheck = useCallback(() => sheetFlags(activeIntake, counts, blockIds, current.current, cycleId || 'local-preview-cycle', switches,
+    percentMaxes && onConvertPercent ? { resolver: percentMaxes, basis: percentBasis, locked: (row, column) => {
+      const block = blockAt(activeIntake, counts, row, column)
+      return Boolean(block && doneWeeks.has(`${block.day}:${block.week + 1}`))
+    } } : undefined),
+  [activeIntake, counts, blockIds, cycleId, switches, percentMaxes, percentBasis, doneWeeks, onConvertPercent])
   useEffect(() => {
-    if (!workspace || !sheets) return
-    setCheck(sheetFlags(activeIntake, counts, blockIds, current.current, cycleId || 'local-preview-cycle', switches))
-  }, [workspace, sheets, sourceRevision, activeIntake, counts, blockIds, switches, cycleId])
+    if (!workspace || !sheets || readOnly) return
+    setCheck(readCheck())
+  }, [workspace, sheets, sourceRevision, readCheck, readOnly])
   function paintFlags(flags: SheetFlag[]) {
     const engine = workbook.current
     if (!engine) return
@@ -753,16 +886,28 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     if (!workspace) return
     painted.current.clear()
     let second = 0
-    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => paintFlags(check.flags)) })
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => paintFlags(latestFlags.current)) })
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
   }, [revision]) // eslint-disable-line react-hooks/exhaustive-deps
   function goToCell(row: number, column: number) {
     try {
-      workbook.current?.scroll({ targetRow: Math.max(0, row - 2), targetColumn: Math.max(0, column - 1) })
-      workbook.current?.setSelection([{ row: [row, row], column: [column, column] }])
+      const engine = workbook.current
+      if (!engine) return
+      engine.scroll({ targetRow: Math.max(0, row - 2), targetColumn: Math.max(0, column - 1) })
+      engine.batchCallApis([{
+        name: 'setSelection',
+        // The batch reads args inside its Immer updater. Each replay needs its own range
+        // because setSelection normalizes it in place and Immer freezes the result.
+        get args() { return [[{ row: [row, row], column: [column, column] }]] },
+      }])
     } catch { /* Navigation never blocks editing. */ }
   }
   const problemCount = check.flags.length + check.emptySlots + check.other.length
+  const readyCount = check.flags.filter(flag => flag.percent === 'ready').length
+  const missingMaxCount = check.flags.filter(flag => flag.percent === 'missing').length
+  const otherCount = problemCount - readyCount - missingMaxCount
+  const percentHeader = `${readyCount} ready to convert · ${missingMaxCount} need a max${otherCount ? ` · ${otherCount} other` : ''}`
+  const publishBlocked = workspace && problemCount > 0 && readyCount === 0
   // Toolbar explanation: the flag on the selected cell, else the first flag in the selected exercise.
   const activeBlock = activeCell ? blockAt(activeIntake, counts, activeCell.row, activeCell.column) : null
   const focusFlag = activeCell ? check.flags.find(flag => flag.row === activeCell.row && flag.column === activeCell.column)
@@ -779,7 +924,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   }
 
   async function save(): Promise<boolean> {
-    if (saving) return false
+    if (readOnly || !sheets || saving) return false
     try {
       setSaving(true)
       const draft: CoachSheetDraft = { format: 'unrack-generated-cycle-v1', intake: activeIntake, counts, blockIds, ...(Object.keys(switches).length ? { switches } : {}), sheets: cloneSheets(current.current) }
@@ -798,13 +943,40 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
 
   // Publish = save if needed, Review cycle, then (when clean) the server preview and
   // its explicit confirmation in the publish panel. Publication itself is unchanged.
+  function openConvert(cells = readCheck().percentCells) {
+    if (readOnly || !cells.length || !onConvertPercent) return
+    const source = current.current
+    onConvertPercent({
+      cells,
+      unit: activeIntake.unit,
+      apply(conversions) {
+        if (!conversions.length) return
+        if (current.current !== source) {
+          setMessage(`The worksheet changed. Open ${percentConversionLabel(activeIntake.unit)} again to review the latest cells.`)
+          return
+        }
+        const matrix = sheetMatrix(structuredClone(source[0]))
+        for (const { row, column, text } of conversions) {
+          matrix[row][column] = { ...matrix[row][column], v: text, m: text }
+        }
+        const next = savedShape([{ ...source[0], data: matrix, celldata: undefined }], source, activeIntake, counts, starts)
+        replaceSheet(next, `Converted ${conversions.length} ${conversions.length === 1 ? 'prescription' : 'prescriptions'} to ${activeIntake.unit}. Save draft to keep the changes.`)
+      },
+    })
+  }
+
   async function publish() {
-    if (publishing || saving || !onPublishReady) return
+    if (readOnly || !sheets || publishing || saving || (twoScreen && publishBusy) || !onPublishReady) return
+    if (workspace && percentMaxes && onConvertPercent) {
+      const latest = readCheck()
+      if (latest.percentCells.some(cell => 'loads' in cell)) { openConvert(latest.percentCells); return }
+      if (latest.percentCells.length > 0) { setCheck(latest); return }
+    }
     setPublishing(true)
     try {
       if ((localPersistence || serverClean === undefined ? dirty : !serverClean) && !await save()) { reveal(statusRef); return }
       if (workspace) {
-        const latest = sheetFlags(activeIntake, counts, blockIds, current.current, cycleId || 'local-preview-cycle', switches)
+        const latest = readCheck()
         setCheck(latest)
         if (latest.flags.length + latest.emptySlots + latest.other.length) { setMessage('Fix the highlighted cells, then publish.'); return }
         setMessage('')
@@ -836,33 +1008,66 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     return count
   }
 
+  const selectedExercise = twoScreen && selection ? weekNames(selection.day, selection.block)[selection.week]?.trim() ?? '' : ''
+  const unsaved = localPersistence || serverClean === undefined ? dirty : !serverClean
+  const hasSheet = Boolean(sheets)
+  const hasPercentCells = check.percentCells.length > 0
+  const canPublish = Boolean(onPublishReady) && !publishBlocked && !readOnly
+  useImperativeHandle(twoScreen ? toolbarRef : undefined, () => ({
+    openSettings: () => { if (sheets && !readOnly) setSettingsOpen(value => !value) },
+    jumpToDay,
+    zoom: changeZoom,
+    openPastWeights: () => { if (selectedExercise) setCardOpen(true) },
+    openConvert,
+    save,
+    publish,
+  }))
+  useEffect(() => {
+    if (!twoScreen || !onToolbarState) return
+    onToolbarState(hasSheet ? {
+      zoom: Math.round(zoom * 100), days: activeIntake.days, unit: activeIntake.unit, settingsOpen, dirty: unsaved,
+      saving, publishing: publishing || publishBusy, problemCount, readyCount, hasPercentCells,
+      selectedExercise, pastWeightsOpen: cardOpen, canPublish, publishBlocked,
+    } : null)
+  }, [twoScreen, onToolbarState, hasSheet, zoom, activeIntake.days, activeIntake.unit, settingsOpen, unsaved, saving, publishing,
+    publishBusy, problemCount, readyCount, hasPercentCells, selectedExercise, cardOpen, canPublish, publishBlocked])
+
   function exerciseCard() {
     const active = selection && activeIntake.days.includes(selection.day) && selection.block < (counts[selection.day] || 0) ? selection : null
     if (!active || !cardOpen) return null
     const { day, block, week } = active, total = counts[day]
     const names = weekNames(day, block), name = names[week] || names[0] || ''
+    const basisKey = percentExerciseKey(names[week])
+    const showBasis = percentMaxes && basisKey && check.percentCells.some(item => percentExerciseKey(item.exercise) === basisKey)
     const runs = startsOf(starts, day, block), split = runs.length > 1
     const done = names.map((_, index) => weekDone(day, index + 1)), doneCount = done.filter(Boolean).length
     return <aside className="cse-card" aria-label="Selected exercise">
       <button className="cse-card-close" aria-label="Close exercise card" onClick={() => setCardOpen(false)}>×</button>
       <p className="cse-kicker">{day} · Exercise {block + 1} of {total}</p>
       <strong className="cse-card-name">{name || `Unnamed exercise · position ${block + 1}`}</strong>
+      {!readOnly && showBasis && <label style={{ display: 'grid', gap: 4, marginBlock: 8 }}>Based on
+        <select style={{ width: '100%' }} value={percentMaxes.resolve(name, percentBasis.get(basisKey))?.exercise_id ?? ''}
+          onChange={event => { const id = event.target.value; setPercentBasis(current => new Map(current).set(basisKey, id)) }}>
+          <option value="">None</option>
+          {percentMaxes.maxes.map(max => <option key={max.exercise_id} value={max.exercise_id}>{max.name} · {max.value} {max.unit} · {max.max_type === 'tested_1rm' ? 'Tested 1RM' : 'Training max'}</option>)}
+        </select>
+      </label>}
       {exerciseByWeek && <section className="cse-card-weeks" aria-label="Exercise by week">
         <div className="cse-card-weeks-head"><p className="cse-card-label">EXERCISE BY WEEK</p>
-          {split ? <button className="cse-link" onClick={() => combineWeeks(day, block)}>{new Set(names).size === 1 ? '▴ One name for all weeks' : '▴ Combine matching weeks'}</button>
-            : <button className="cse-link" onClick={() => nameEachWeek(day, block)}>▾ Different exercise by week</button>}</div>
+          {!readOnly && (split ? <button className="cse-link" onClick={() => combineWeeks(day, block)}>{new Set(names).size === 1 ? '▴ One name for all weeks' : '▴ Combine matching weeks'}</button>
+            : <button className="cse-link" onClick={() => nameEachWeek(day, block)}>▾ Different exercise by week</button>)}</div>
         <ol>{names.map((weekName, index) => <li key={index} className={`${done[index] ? 'done' : ''}${index === week ? ' selected' : ''}${runs.includes(index + 1) && index > 0 && weekName !== names[index - 1] ? ' changed' : ''}`}>
           <span className="cse-card-w">W{index + 1}</span><span>{weekName || <em>No name</em>}</span>{done[index] && <span className="cse-card-done" title="Workout done, locked">Done</span>}</li>)}</ol>
-        {doneCount > 0 && <p className="cse-card-hint">Done weeks are locked. Type a new name in the exercise cell to change the weeks still to come.</p>}
-        {!doneCount && !split && <p className="cse-card-hint">One name covers every week. Expand to name each week on its own.</p>}
+        {!readOnly && doneCount > 0 && <p className="cse-card-hint">Done weeks are locked. Type a new name in the exercise cell to change the weeks still to come.</p>}
+        {!readOnly && !doneCount && !split && <p className="cse-card-hint">One name covers every week. Expand to name each week on its own.</p>}
       </section>}
       {exerciseReference && <section className="cse-card-reference" aria-label="Past weights"><p className="cse-card-label">PAST WEIGHTS</p>{exerciseReference(name)}</section>}
-      <div className="cse-card-actions">
+      {!readOnly && <div className="cse-card-actions">
         <button aria-label="↑ Move up" disabled={block === 0} onClick={() => changeBlock(day, block, 'up')}>↑</button>
         <button aria-label="↓ Move down" disabled={block === total - 1} onClick={() => changeBlock(day, block, 'down')}>↓</button>
         <button aria-label="+ Add exercise below" disabled={total >= 12} onClick={() => changeBlock(day, block, 'add')}>+ Add below</button>
         <button className="cse-danger" disabled={total <= 1} onClick={() => changeBlock(day, block, 'remove')}>Remove exercise</button>
-      </div>
+      </div>}
     </aside>
   }
 
@@ -893,12 +1098,15 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     </aside>
   }
 
-  const showIntake = !workspace || !sheets || settingsOpen
-  return <main className={workspace ? 'cse-page cse-page-workspace' : 'cse-page'}>
+  const showIntake = !readOnly && (!workspace || !sheets || settingsOpen)
+  const hint = focusFlag ? <FlagExplanation flag={focusFlag} onGo={() => goToCell(focusFlag.row, focusFlag.column)} /> : <span className="cse-hint">Prescriptions: sets x reps @ load or RPE, e.g. 3x8 @ 225, 3x8 @ 7, 3x12 each @ 5 lb, 1x8+ or AMRAP. @ 10 or less is RPE; add lb or kg for a light weight. SKIP leaves a week out. Red = can't read, yellow = empty or unclear. Click an exercise name for past weights.{check.flags.length > 0 && ' Select a red or yellow cell to see why.'}</span>
+  const Page = twoScreen && onBuildDraft ? 'div' : 'main'
+  return <Page className={workspace ? 'cse-page cse-page-workspace' : 'cse-page'}>
     {!workspace && <header className="cse-top"><span>UNRACK <b>COACH</b></span><span>{localPersistence ? 'LOCAL REVIEW · EMBEDDED SPREADSHEET PROOF' : 'TRAINING CYCLE BUILDER'}</span></header>}
-    {showIntake && <section className="cse-intake" aria-label={workspace && sheets ? 'Cycle settings' : undefined}>
-      {workspace && sheets ? <div><p className="cse-kicker">CYCLE SETTINGS</p><h1>Change the cycle shape</h1><p>Rebuilding replaces this sheet with a blank one in the new shape. Save first if you want to keep this version.</p></div>
-      : <div><p className="cse-kicker">NEW TRAINING CYCLE</p><h1>Build in a spreadsheet</h1><p>{localPersistence ? 'Choose the cycle shape, then program directly in the cells. This local proof does not publish to athletes.' : 'Choose the cycle shape, program directly in the cells, and review every prescription before publishing.'}</p></div>}
+    {twoScreen && sheets && !readOnly && <div className="ccb-hint">{hint}</div>}
+    {showIntake && <section inert={twoScreen && intakeDisabled} className="cse-intake" aria-label={workspace && sheets ? 'Cycle settings' : undefined}>
+      {!(twoScreen && onBuildDraft) && (workspace && sheets ? <div><p className="cse-kicker">CYCLE SETTINGS</p><h1>Change the cycle shape</h1><p>Rebuilding replaces this sheet with a blank one in the new shape. Save first if you want to keep this version.</p></div>
+      : <div><p className="cse-kicker">NEW TRAINING CYCLE</p><h1>Build in a spreadsheet</h1><p>{localPersistence ? 'Choose the cycle shape, then program directly in the cells. This local proof does not publish to athletes.' : 'Choose the cycle shape, program directly in the cells, and review every prescription before publishing.'}</p></div>)}
       <div className="cse-fields">
         <label>Client{clientOptions ? <select value={intake.client} onChange={e => setIntake({ ...intake, client: e.target.value })}><option value="">Select a client</option>{clientOptions.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select> : <input value={intake.client} placeholder="Select client in connected builder" onChange={e => setIntake({ ...intake, client: e.target.value })}/>}</label>
         <label>Cycle name<input value={intake.name} onChange={e => setIntake({ ...intake, name: e.target.value })}/></label>
@@ -907,28 +1115,28 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
         <label>Default unit<select value={intake.unit} onChange={e => setIntake({ ...intake, unit: e.target.value as 'lb' | 'kg' })}><option value="lb">lb</option><option value="kg">kg</option></select></label>
       </div>
       <fieldset><legend>Training days</legend><div className="cse-days">{weekdays.map(day => <label key={day}><input type="checkbox" checked={intake.days.includes(day)} onChange={e => setIntake({ ...intake, days: e.target.checked ? weekdays.filter(value => value === day || intake.days.includes(value)) : intake.days.filter(value => value !== day) })}/>{day.slice(0, 3)}</label>)}</div></fieldset>
-      <button className="cse-primary" disabled={!intake.days.length || intake.days.length * intake.weeks > COACH_CYCLE_PUBLISH_LIMITS.authoredDays || Boolean(clientOptions && !intake.client)} onClick={start}>{workspace && sheets ? 'Rebuild sheet with these settings' : 'Create new template'}</button>
+      <button className="cse-primary" disabled={twoScreen && intakeDisabled || !intake.days.length || intake.days.length * intake.weeks > COACH_CYCLE_PUBLISH_LIMITS.authoredDays || Boolean(clientOptions && !intake.client)} onClick={start}>{workspace && sheets ? 'Rebuild sheet with these settings' : 'Create new template'}</button>
       {intake.days.length * intake.weeks > COACH_CYCLE_PUBLISH_LIMITS.authoredDays && <p role="alert">Choose at most {COACH_CYCLE_PUBLISH_LIMITS.authoredDays} total workout days across the cycle. Reduce the weeks or selected weekdays.</p>}
       {sheets && !workspace && <p className="cse-caution">Intake changes above apply when you create another new template. That replaces this sheet; save your work first.</p>}
     </section>}
     {sheets && <section className="cse-workspace">
-      <div className="cse-workspace-head">{workspace
-        ? <div className="cse-workspace-meta"><button className="cse-settings-toggle" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>Cycle settings</button><span>{activeIntake.weeks} {activeIntake.weeks === 1 ? 'week' : 'weeks'} · {activeIntake.days.map(day => day.slice(0, 3)).join(', ')} · {activeIntake.unit}</span>{activeIntake.days.length > 1 && <span className="cse-day-jump" role="group" aria-label="Go to day">Go to {activeIntake.days.map((day, index) => <button key={day} onClick={() => jumpToDay(index)}>{day.slice(0, 3)}</button>)}</span>}{focusFlag ? <FlagExplanation flag={focusFlag} onGo={() => goToCell(focusFlag.row, focusFlag.column)} /> : <span className="cse-hint">Prescriptions: sets x reps @ load or RPE, e.g. 3x8 @ 225, 3x8 @ 7, 3x12 each @ 5 lb, 1x8+ or AMRAP. @ 10 or less is RPE; add lb or kg for a light weight. SKIP leaves a week out. Red = can't read, yellow = empty or unclear. Click an exercise name for past weights.{check.flags.length > 0 && ' Select a red or yellow cell to see why.'}</span>}</div>
-        : <div><p className="cse-kicker">WORKSHEET</p><h2>{activeIntake.name}</h2><span>{activeIntake.weeks} weeks · {activeIntake.days.join(', ')} · {activeIntake.unit}</span></div>}<div className="cse-actions"><div className="cse-zoom" aria-label="Spreadsheet zoom"><button aria-label="Zoom out" disabled={zoom <= 0.5} onClick={() => changeZoom(-1)}>−</button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" disabled={zoom >= 1.5} onClick={() => changeZoom(1)}>+</button></div><span className="cse-divider" aria-hidden="true" /><button onClick={() => void save()} disabled={saving || !localPersistence && !onSaveDraft}>{saving ? 'Saving…' : 'Save draft'}</button>{!(workspace && onPublishReady) && <button className={onPublishReady ? undefined : 'cse-primary'} onClick={() => reviewInterpretation()}>Review cycle</button>}{onPublishReady && <button className="cse-primary" disabled={publishing || saving || publishBusy || workspace && problemCount > 0} title={workspace && problemCount ? 'Fix the highlighted cells to publish' : undefined} onClick={() => void publish()}>{publishing || publishBusy ? 'Publishing…' : 'Publish'}</button>}</div></div>
+      {!twoScreen && <div className="cse-workspace-head">{workspace
+        ? <div className="cse-workspace-meta"><button className="cse-settings-toggle" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>Cycle settings</button><span>{activeIntake.weeks} {activeIntake.weeks === 1 ? 'week' : 'weeks'} · {activeIntake.days.map(day => day.slice(0, 3)).join(', ')} · {activeIntake.unit}</span>{activeIntake.days.length > 1 && <span className="cse-day-jump" role="group" aria-label="Go to day">Go to {activeIntake.days.map((day, index) => <button key={day} onClick={() => jumpToDay(index)}>{day.slice(0, 3)}</button>)}</span>}{hint}</div>
+        : <div><p className="cse-kicker">WORKSHEET</p><h2>{activeIntake.name}</h2><span>{activeIntake.weeks} weeks · {activeIntake.days.join(', ')} · {activeIntake.unit}</span></div>}<div className="cse-actions"><div className="cse-zoom" aria-label="Spreadsheet zoom"><button aria-label="Zoom out" disabled={zoom <= 0.5} onClick={() => changeZoom(-1)}>−</button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" disabled={zoom >= 1.5} onClick={() => changeZoom(1)}>+</button></div><span className="cse-divider" aria-hidden="true" /><button onClick={() => void save()} disabled={saving || !localPersistence && !onSaveDraft}>{saving ? 'Saving…' : 'Save draft'}</button>{workspace && percentMaxes && onConvertPercent && <button disabled={saving || publishing || publishBusy || !check.percentCells.length} onClick={() => openConvert()}>{percentConversionLabel(activeIntake.unit)}</button>}{!(workspace && onPublishReady) && <button className={onPublishReady ? undefined : 'cse-primary'} onClick={() => reviewInterpretation()}>Review cycle</button>}{onPublishReady && <button className="cse-primary" disabled={publishing || saving || publishBusy || publishBlocked} title={publishBlocked ? 'Fix the highlighted cells to publish' : undefined} onClick={() => void publish()}>{publishing || publishBusy ? 'Publishing…' : 'Publish'}</button>}</div></div>}
       {workspace && problemCount > 0 && <div className="cse-flags" role="region" aria-label="Cells to fix">
-        <strong>{problemCount === 1 ? '1 thing to fix before publishing' : `${problemCount} things to fix before publishing`}</strong>
-        <ul>{check.flags.slice(0, 8).map(flag => <li key={`${flag.row}:${flag.column}`}><button className={`cse-flag ${flag.kind}`} onClick={() => goToCell(flag.row, flag.column)}><b>{flag.label}</b> {flag.message}</button></li>)}
+        <strong>{check.percentCells.length > 0 ? percentHeader : problemCount === 1 ? '1 thing to fix before publishing' : `${problemCount} things to fix before publishing`}</strong>
+        <ul>{check.flags.slice(0, 8).map(flag => <li key={`${flag.row}:${flag.column}`}><button className={`cse-flag ${flagClassName(flag)}`} title={flag.message} onClick={() => goToCell(flag.row, flag.column)}><b>{flag.label}{flag.percent ? ':' : ''}</b> {flag.message}</button></li>)}
           {check.flags.length > 8 && <li className="cse-flag-more">+{check.flags.length - 8} more highlighted in the sheet</li>}
           {check.emptySlots > 0 && <li className="cse-flag-more">{check.emptySlots === 1 ? '1 exercise slot is empty' : `${check.emptySlots} exercise slots are empty`}: fill it in or remove it from the exercise card.</li>}
           {check.other.map(message => <li key={message} className="cse-flag-more">{message}</li>)}</ul>
       </div>}
-      <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}><div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} showFormulaBar={false} addRows={0} cellContextMenu={['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>{exercisePanel()}</div>
-      <div className="cse-status" ref={statusRef}><span>{(localPersistence || serverClean === undefined ? dirty : !serverClean) ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>
+      <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}><div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} {...(readOnly ? { allowEdit: false } : {})} showFormulaBar={false} addRows={0} cellContextMenu={readOnly ? ['copy'] : ['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>{exercisePanel()}</div>
+      {!readOnly && <div className="cse-status" ref={statusRef}><span>{unsaved ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>}
     </section>}
     {review && localPersistence && reviewSchedule && <section className="cycle-review" aria-label="Cycle calendar review">
       <h2>Cycle dates</h2><p>Week 1 starts {reviewSchedule.startOn}. The complete cycle ends {reviewSchedule.endOn}.</p>
       <ol>{reviewSchedule.weeks.map(week => <li key={week.ordinal}><strong>Week {week.ordinal}: </strong>{week.days.map(day => `${day.name} · ${day.plannedDate}`).join(', ')}</li>)}</ol>
     </section>}
     {review && <CoachCycleInterpretationPanel result={review} destinationIssues={destinationIssues} />}
-  </main>
+  </Page>
 }

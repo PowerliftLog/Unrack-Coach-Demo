@@ -2,9 +2,9 @@ import CoachExcelNextCyclePreview from './CoachExcelNextCyclePreview'
 import { readNextCycleRecovery, nextCycleRecoveryKey } from './coach-excel-next-cycle-recovery'
 import { coachExcelBetaPublicationRecoveryKey, readCoachExcelBetaPublicationRecovery, COACH_EXCEL_BETA_RECOVERY_CHANGED } from './coach-excel-publication-recovery'
 import type { createCoachExcelPublishApi } from './lib/coach-excel-publish-api'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import type { Sheet } from '@fortune-sheet/core'
-import CoachSheetEditorProof, { nameStarts, validStructure, type CoachSheetDraft } from './review/CoachSheetEditorProof'
+import CoachSheetEditorProof, { nameStarts, validStructure, type CoachSheetActions, type CoachSheetDraft, type CoachSheetToolbarState } from './review/CoachSheetEditorProof'
 import CoachCycleServerPreview from './CoachCycleServerPreview'
 import CoachExcelBetaSavedDraftPreview from './CoachExcelBetaSavedDraftPreview'
 import CoachExcelSavedDraftPreview from './CoachExcelSavedDraftPreview'
@@ -19,9 +19,13 @@ import { CoachCycleLibrary, nextMondayIso, type ErasedAthleteDraftApi } from './
 import { CoachCycleTemplateError, type createCoachCycleTemplateApi, type CoachCycleTemplateCreateInput, type CoachCycleTemplateDeleteInput, type CoachCycleTemplateSummary } from './lib/coach-cycle-template-api'
 import { CoachCyclePublishError, type createCoachCyclePublishApi, type CoachCyclePublishPreview, type CoachCyclePublishSource } from './lib/coach-cycle-publish-api'
 import ExercisePastPerformance, { type AthleteHistoryState } from './ExercisePastPerformance'
-import type { CoachExerciseHistoryV1 } from './lib/coach-api'
+import type { CoachExerciseHistoryV1, PercentageProgrammingApi } from './lib/coach-api'
+import { createPercentMaxResolver, type PercentMaxResolver } from './lib/coach-percent-resolution'
+import { CoachConvertPercentDialog, type PercentConversionRequest } from './CoachConvertPercentDialog'
 import { CoachExcelNextCycleError } from './lib/coach-excel-next-cycle-client'
 import type { CoachCycleRunningState, CoachCycleRunningUpdateInput } from './lib/coach-excel-next-cycle-api'
+import { CoachBuilderToolbar } from './CoachBuilderToolbar'
+import { CoachCycleStrip, classifyCycles, type CycleSelection } from './CoachCycleStrip'
 import './coach-cycle-draft-workspace.css'
 
 export type CoachExcelBetaReview = {
@@ -57,9 +61,16 @@ export type CoachCycleDraftWorkspaceProps = {
   erasedAthleteDraftApi?: ErasedAthleteDraftApi
   /** Athlete's recent sessions for the builder's past-performance reference (read-only). */
   athleteHistory?: (input: { target_gym: string; target_athlete: string }) => Promise<CoachExerciseHistoryV1>
+  getProgrammingMaxesV1?: PercentageProgrammingApi['getProgrammingMaxesV1']
+  getAthleteTrackingV1?: PercentageProgrammingApi['getAthleteTrackingV1']
+  layout?: 'two-screen'
+  today?: string
+  initialDraftId?: string
+  navigationRef?: Ref<CoachBuilderNavigation>
   onBack(): void
 }
-type OpenDraft = { id: string; revision: number; initial?: CoachSheetDraft; saved?: string; sourceHash?: string; mount: number; completed?: { day: string; week: number }[] }
+type OpenDraft = { id: string; revision: number; initial?: CoachSheetDraft; saved?: string; sourceHash?: string; mount: number; completed?: { day: string; week: number }[]; previous?: CoachCycleDraftRecord }
+export type CoachBuilderNavigation = { canLeave(): boolean }
 type Running = Extract<CoachCycleRunningState, { linked: true }>
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const dayName = (weekday: number) => WEEKDAY_NAMES[weekday - 1] ?? `Day ${weekday}`
@@ -82,6 +93,13 @@ const RUNNING_MESSAGES: Record<string, string> = {
 const snapshot = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item)
+async function saveVerifiedDraft(api: CoachCycleDraftWorkspaceProps['api'], request: CoachCycleDraftSaveInput) {
+  const receipt = await api.save(request)
+  // A replay receipt may describe a revision that has since changed or been deleted.
+  const record = await api.read({ gym: request.gym, athlete: request.athlete, draft: request.draft })
+  if (record.revision !== receipt.revision || snapshot(record.source) !== snapshot(request.source)) throw new CoachCycleDraftError('revision_conflict')
+  return record
+}
 const editorSource = (record: CoachCycleDraftRecord): CoachSheetDraft => ({ ...record.source, sheets: record.source.sheets as Sheet[] })
 
 const ACTIVE_SHEET_SEARCH_LIMIT = 30
@@ -96,11 +114,76 @@ export function matchActiveSheet(drafts: { id: string; intake: { name: string; s
   return named[0] ? { id: named[0].id, exact: false } : null
 }
 
+export function CoachBuilderStart({ api, gym, clients, onStarted, navigationRef }: {
+  api: CoachCycleDraftWorkspaceProps['api']
+  gym: string
+  clients: { id: string; name: string }[]
+  onStarted(record: CoachCycleDraftRecord): void
+  navigationRef: Ref<CoachBuilderNavigation>
+}) {
+  const pending = useRef<CoachCycleDraftSaveInput | null>(null)
+  const inFlight = useRef(false)
+  const alive = useRef(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  useImperativeHandle(navigationRef, () => ({
+    canLeave: () => !inFlight.current && (!pending.current || window.confirm('Leave this setup? The unconfirmed draft may already be stored.')),
+  }))
+
+  async function submit(request: CoachCycleDraftSaveInput) {
+    if (inFlight.current) return
+    pending.current = request
+    inFlight.current = true
+    setSaving(true)
+    setMessage('')
+    try {
+      const record = await saveVerifiedDraft(api, request)
+      if (!alive.current) return
+      pending.current = null
+      onStarted(record)
+    } catch (error) {
+      if (!alive.current) return
+      if (error instanceof CoachCycleDraftError && !['network', 'unavailable', 'retryable'].includes(error.code)) {
+        pending.current = null
+      }
+      const reason = error instanceof CoachCycleDraftError ? `${error.message} ` : ''
+      setMessage(pending.current ? `${reason}The draft could not be confirmed. Retry the same save.` : `${reason}The draft could not be created.`)
+    } finally {
+      inFlight.current = false
+      if (alive.current) setSaving(false)
+    }
+  }
+
+  return <section className="ccb-start" aria-label="Build Workouts start">
+    <h1>New draft</h1>
+    <CoachSheetEditorProof layout="two-screen" localPersistence={false} clientOptions={clients} intakeDisabled={Boolean(pending.current)}
+      onBuildDraft={draft => {
+        const source: unknown = JSON.parse(snapshot(draft))
+        if (pending.current) return
+        if (!isCoachCycleDraftSource(source) || !clients.some(client => client.id === source.intake.client)) {
+          setMessage('Choose a client and check the cycle setup before creating the draft.')
+          return
+        }
+        void submit({ gym, athlete: source.intake.client, draft: crypto.randomUUID(), request_id: crypto.randomUUID(), expected_revision: 0, source })
+      }} />
+    {saving && <p role="status">Creating draft…</p>}
+    {message && <p role="alert">{message}</p>}
+    {!saving && pending.current && <button className="button outline" onClick={() => { if (pending.current) void submit(pending.current) }}>Retry unconfirmed save</button>}
+  </section>
+}
+
 /** A scope change destroys all mounted editor state, including unresolved requests. */
 export default function CoachCycleDraftWorkspace(props: CoachCycleDraftWorkspaceProps) {
   return <DraftWorkspace key={`${props.ownerSubject}:${props.gym}:${props.athlete}`} {...props} />
 }
-function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, draftNames = false, autoOpen = false, openProgram = null, libraryClients, erasedAthleteDraftApi, onBack }: CoachCycleDraftWorkspaceProps) {
+function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi, templateApi, publishPreviewApi, commitV2Api, openPending, previewV2Api, previewV2AdmissionVersion, ownerSubject, gym, athlete, athleteName, currentProgram, athleteHistory, getProgrammingMaxesV1, getAthleteTrackingV1, draftNames = false, autoOpen = false, openProgram = null, libraryClients, erasedAthleteDraftApi, layout, today, initialDraftId, navigationRef, onBack }: CoachCycleDraftWorkspaceProps) {
+  const twoScreen = layout === 'two-screen'
+  const sheet = useRef<CoachSheetActions>(null)
+  const [toolbarState, setToolbarState] = useState<CoachSheetToolbarState | null>(null)
+  const [stripRunning, setStripRunning] = useState<Running | null>(null)
+  const [attemptedCycle, setAttemptedCycle] = useState<CycleSelection>()
+  const [intakeReadFailed, setIntakeReadFailed] = useState(false)
   const [historyState, setHistoryState] = useState<AthleteHistoryState>({ status: 'loading' })
   useEffect(() => {
     if (!athleteHistory) return
@@ -110,10 +193,27 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       .catch(() => { if (active) setHistoryState({ status: 'error' }) })
     return () => { active = false }
   }, [athleteHistory, gym, athlete])
+  const [percentMaxes, setPercentMaxes] = useState<PercentMaxResolver>()
+  const [conversion, setConversion] = useState<PercentConversionRequest | null>(null)
+  useEffect(() => {
+    setPercentMaxes(undefined)
+    if (!getProgrammingMaxesV1 || !getAthleteTrackingV1) return
+    let active = true
+    const target = { target_gym: gym, target_athlete: athlete }
+    const loadMaxes = async () => {
+      try {
+        const [maxes, tracking] = await Promise.all([getProgrammingMaxesV1(target), getAthleteTrackingV1(target)])
+        if (active) setPercentMaxes(createPercentMaxResolver(maxes, tracking, twoScreen))
+      } catch { /* Fall back to the existing sheet checks if either read is unavailable. */ }
+    }
+    void loadMaxes()
+    return () => { active = false }
+  }, [getProgrammingMaxesV1, getAthleteTrackingV1, gym, athlete, twoScreen])
   const [drafts, setDrafts] = useState<CoachCycleDraftSummary[]>([])
   // Cycle names for the picker, read once per draft revision (read-only; a failed read keeps the dated label).
   const [names, setNames] = useState<Record<string, DraftLabel>>({})
   const [drawer, setDrawer] = useState(false)
+  const [published, setPublished] = useState('')
   const [opened, setOpened] = useState<OpenDraft | null>(null)
   const openRef = useRef<OpenDraft | null>(null)
   const edits = useRef<CoachSheetDraft | null>(null)
@@ -121,6 +221,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const busyRef = useRef(false)
   const alive = useRef(true)
   const autoOpened = useRef(false)
+  const listVersion = useRef(0)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [listFailed, setListFailed] = useState(false)
@@ -133,13 +234,17 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const runningRequest = useRef<CoachCycleRunningUpdateInput | null>(null)
   const [runningBusy, setRunningBusy] = useState(false)
   const runningApi = excelBetaReview?.nextCycleApi?.runningState && excelBetaReview.nextCycleApi.runningUpdate ? excelBetaReview.nextCycleApi : null
-  /** Exact link from the running program to the draft it was published from (null: not running, or unavailable). */
-  async function readRunning(draft: string | null): Promise<Running | null> {
-    if (!runningApi?.runningState || !excelBetaReview) return null
+  /** Read the exact draft link, with null reserved for an unavailable check. */
+  async function readRunningState(draft: string | null): Promise<CoachCycleRunningState | null> {
+    const api = twoScreen ? excelBetaReview?.nextCycleApi : runningApi
+    if (!api?.runningState || !excelBetaReview) return null
     try {
-      const state = await runningApi.runningState({ gym, athlete, draft, expected_gate_epoch: excelBetaReview.gateEpoch })
-      return state.linked ? state : null
+      return await api.runningState({ gym, athlete, draft, expected_gate_epoch: excelBetaReview.gateEpoch })
     } catch { return null }
+  }
+  async function readRunning(draft: string | null): Promise<Running | null> {
+    const state = await readRunningState(draft)
+    return state?.linked ? state : null
   }
   const [templates, setTemplates] = useState<CoachCycleTemplateSummary[]>([])
   const [templateLoading, setTemplateLoading] = useState(false)
@@ -186,6 +291,12 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   function clearPublishPreview() { setReviewEpoch(value => value + 1); previewGeneration.current++; setPublishPreview(null); setPreviewError(null); setPreviewNotice('') }
   function open(value: OpenDraft | null) {
     clearPublishPreview()
+    setConversion(null)
+    if (twoScreen) {
+      setAttemptedCycle(undefined)
+      setToolbarState(null)
+      if (openRef.current?.id !== value?.id) { setDrawer(false); setPublished('') }
+    }
     openRef.current = value; setOpened(value); edits.current = value?.initial ?? null
     setSourceClean(Boolean(value?.saved && edits.current && snapshot(edits.current) === value.saved))
   }
@@ -206,19 +317,23 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     return 'The request could not be confirmed.'
   }
   async function refresh() {
-    setLoading(true); setListFailed(false)
+    setLoading(true); setListFailed(false); if (twoScreen) setIntakeReadFailed(false)
+    const version = ++listVersion.current
+    const currentRead = () => alive.current && (!twoScreen || version === listVersion.current)
     const openedBeforeRead = openRef.current
     try {
       const list = await api.list({ ...scope, page_limit: 100 })
-      if (alive.current) {
-        setDrafts(list)
+      if (!currentRead()) return
+      setDrafts(list)
+      if (twoScreen) await refreshCycleStrip(list, currentRead)
+      if (currentRead()) {
         const current = openRef.current
         // Quick start: the first time the builder opens, go straight to the newest saved cycle,
         // or to new-cycle settings when this client has none.
-        if (openProgram && !autoOpened.current && !current) {
+        if (!twoScreen && openProgram && !autoOpened.current && !current) {
           autoOpened.current = true
           void openActiveSheet(list, openProgram)
-        } else if (autoOpen && !autoOpened.current && !current) {
+        } else if (!twoScreen && autoOpen && !autoOpened.current && !current) {
           autoOpened.current = true
           const newest = [...list].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]
           queueMicrotask(() => { if (!alive.current || openRef.current) return; if (newest) void load(newest.draft_id); else create() })
@@ -232,12 +347,19 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         }
       }
     }
-    catch (error) { if (alive.current) { setListFailed(true); setMessage(errorMessage(error)) } }
-    finally { if (alive.current) setLoading(false) }
+    catch (error) {
+      if (!currentRead()) return
+      setListFailed(true); setMessage(errorMessage(error))
+      if (twoScreen && initialDraftId && !autoOpened.current && !openRef.current && !blockedError(error)) {
+        autoOpened.current = true
+        await load(initialDraftId, undefined, true)
+      }
+    }
+    finally { if (currentRead()) setLoading(false) }
   }
   useEffect(() => { alive.current = true; void refresh(); return () => { alive.current = false } }, [api, gym, athlete]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!draftNames) return
+    if (twoScreen || !draftNames) return
     const missing = drafts.filter(draft => names[draft.draft_id]?.revision !== draft.revision).slice(0, 30)
     if (!missing.length) return
     let active = true
@@ -251,6 +373,40 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     return !openRef.current || (!pending.current && (!edits.current || snapshot(edits.current) === openRef.current.saved))
       || window.confirm('Discard the edits in this editor and leave this draft? An unconfirmed save may already be stored on the server.')
   }
+  async function refreshCycleStrip(list: CoachCycleDraftSummary[], currentRead: () => boolean) {
+    const runningRead = readRunningState(null)
+    const labels: Record<string, DraftLabel> = {}
+    let failed = false
+    // Listing returns metadata only. Limit concurrent full-sheet reads and reuse unchanged labels.
+    for (let index = 0; index < list.length && currentRead(); index += 8) {
+      await Promise.all(list.slice(index, index + 8).map(async draft => {
+        const cached = names[draft.draft_id]
+        if (cached?.revision === draft.revision) { labels[draft.draft_id] = cached; return }
+        try {
+          const record = await api.read({ ...scope, draft: draft.draft_id })
+          if (record.revision === draft.revision && record.source_hash === draft.source_hash && record.source.intake.client === athlete) {
+            labels[draft.draft_id] = labelFor(record.source.intake, record.revision)
+          } else failed = true
+        } catch { failed = true }
+      }))
+    }
+    const state = await runningRead
+    if (!currentRead()) return
+    const linked = state ? state.linked ? state : null : stripRunning
+    setStripRunning(linked)
+    setNames(labels)
+    setIntakeReadFailed(failed || Boolean(excelBetaReview?.nextCycleApi?.runningState && !state))
+    if (autoOpened.current || openRef.current) return
+    autoOpened.current = true
+    const saved = list.map(draft => ({ ...draft, intake: labels[draft.draft_id] }))
+    const cycles = classifyCycles(saved, linked, today ?? '')
+    const next = cycles.next[0]
+    if (initialDraftId) await load(initialDraftId, state, true)
+    else if (cycles.current) await load({ kind: 'current', draftId: cycles.current.draft_id }, state ?? linked)
+    else if (next) await load({ kind: 'next', draftId: next.draft_id }, state)
+    else create()
+  }
+
   async function openActiveSheet(list: CoachCycleDraftSummary[], program: { name: string; startOn?: string | null }) {
     const linked = await readRunning(null)
     if (!alive.current || openRef.current) return
@@ -269,11 +425,16 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     if (match) { await load(match.id); return }
     setMessage(`No saved sheet matches the active program “${program.name}”. It may have been built outside the sheet builder. Use View programs on the client page to see it.`)
   }
-  async function load(id: string, known?: Running | null) {
-    if (busyRef.current || !leaveEdits()) return
+  async function load(draft: string | Exclude<CycleSelection, { kind: 'new' }>, known?: CoachCycleRunningState | null, justCreated = false) {
+    if (busyRef.current || (twoScreen && (publishBusy || runningBusy)) || !leaveEdits()) return
+    const id = typeof draft === 'string' ? draft : draft.draftId
+    if (typeof draft !== 'string') setAttemptedCycle(draft)
     busyRef.current = true; setBusy(true); setMessage('')
     try {
-      const [record, live] = await Promise.all([api.read({ ...scope, draft: id }), known !== undefined ? Promise.resolve(known) : readRunning(id)])
+      const [record, live] = await Promise.all([
+        api.read({ ...scope, draft: id }),
+        known !== undefined ? Promise.resolve(known) : readRunningState(twoScreen ? null : id),
+      ])
       if (!alive.current) return
       if (record.source.intake.client !== athlete) throw new CoachCycleDraftError('invalid')
       const initial = editorSource(record)
@@ -282,21 +443,33 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         return
       }
       pending.current = null; setHasPending(false); setBlocked(false)
-      const runningNow = live && live.draft_id === id ? live : null
+      const linked = live ? live.linked ? live : null : twoScreen ? stripRunning : null
+      const runningNow = linked?.draft_id === id ? linked : null
+      const previous = twoScreen && !justCreated && classifyCycles([{ ...record, intake: initial.intake }], linked, today ?? '').previous.length > 0
       setRunning(runningNow); runningRequest.current = null
+      if (twoScreen) {
+        setStripRunning(linked)
+        setNames(labels => ({ ...labels, [id]: labelFor(initial.intake, record.revision) }))
+        setDrafts(list => list.map(item => item.draft_id === id ? record : item))
+      }
       const completed = runningNow ? runningCompleted(runningNow) : record.completed_workouts
-      open({ id, revision: record.revision, initial, saved: snapshot(initial), sourceHash: record.source_hash, mount: (openRef.current?.mount ?? 0) + 1, ...(completed?.length ? { completed } : {}) })
-      setMessage(runningNow ? '' : `Opened private draft revision ${record.revision}.`)
-    } catch (error) { if (alive.current) setMessage(errorMessage(error)) }
+      open({ id, revision: record.revision, initial, saved: snapshot(initial), sourceHash: record.source_hash, mount: (openRef.current?.mount ?? 0) + 1, ...(completed?.length ? { completed } : {}), ...(previous ? { previous: record } : {}) })
+      setMessage(runningNow || previous ? '' : `Opened private draft revision ${record.revision}.`)
+    } catch (error) {
+      if (alive.current) {
+        const detail = errorMessage(error)
+        setMessage(typeof draft === 'string' ? detail : `Could not open this cycle. ${detail}${openRef.current ? ' The open worksheet is still shown.' : ''}`)
+      }
+    }
     finally { busyRef.current = false; if (alive.current) setBusy(false) }
   }
   function create() {
-    if (busyRef.current || !leaveEdits()) return
+    if (busyRef.current || (twoScreen && (publishBusy || runningBusy)) || !leaveEdits()) return
     pending.current = null; setHasPending(false); setBlocked(false); setRunning(null); runningRequest.current = null; setMessage('New private draft. Create the worksheet, then save it to Coach storage.')
     open({ id: crypto.randomUUID(), revision: 0, mount: (openRef.current?.mount ?? 0) + 1 })
   }
   async function save(draft: CoachSheetDraft) {
-    if (busyRef.current || blocked) throw new Error('Resolve the current request before saving.')
+    if (busyRef.current || blocked || openRef.current?.previous) throw new Error('Resolve the current request before saving.')
     const current = openRef.current
     // FortuneSheet may attach undefined optional fields. Normalize to the exact
     // JSON source sent over the wire before validating its JSON-only contract.
@@ -314,18 +487,15 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     pending.current = request; setHasPending(true)
     busyRef.current = true; setBusy(true); setMessage('Saving private draft…')
     try {
-      const receipt = await api.save(request)
-      // A replay receipt may describe a revision that has since changed or been
-      // deleted. Never treat a receipt alone as proof of the current source.
-      const record = await api.read({ ...scope, draft: current.id })
+      const record = await saveVerifiedDraft(api, request)
       if (!alive.current) throw new Error('Workspace closed')
-      if (record.revision !== receipt.revision || snapshot(record.source) !== snapshot(request.source)) throw new CoachCycleDraftError('revision_conflict')
       pending.current = null; setHasPending(false)
       const saved = snapshot(request.source)
       const next = { ...current, revision: record.revision, saved, sourceHash: record.source_hash }
       openRef.current = next; setOpened(next)
       setSourceClean(Boolean(edits.current && snapshot(edits.current) === saved))
       setDrafts(list => [record, ...list.filter(item => item.draft_id !== record.draft_id)])
+      if (twoScreen) setNames(labels => ({ ...labels, [record.draft_id]: labelFor(record.source.intake, record.revision) }))
       if (edits.current && snapshot(edits.current) !== saved) {
         setMessage(`Revision ${record.revision} is stored. Newer edits remain unsaved; save them next.`)
         throw new Error('Newer edits remain unsaved')
@@ -535,7 +705,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       setMessage('')
       setPublished(`Updated ${count} ${count === 1 ? 'workout' : 'workouts'} in “${fresh.program_name}” for ${athleteName} (${result.changed_days.map(([week, weekday]) => dayLabel({ week, weekday })).join(', ')}). Done workouts did not change.`)
       const after = await readRunning(current.id)
-      if (alive.current && after) setRunning(after)
+      if (alive.current && after) { setRunning(after); if (twoScreen) setStripRunning(after) }
     } catch (error) {
       if (!alive.current) return
       if (error instanceof CoachExcelNextCycleError) {
@@ -558,6 +728,38 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const [publishRequest, setPublishRequest] = useState(0)
   const [publishBusy, setPublishBusy] = useState(false)
   const [library, setLibrary] = useState(false)
+  const canLeave = () => !busyRef.current && !(twoScreen && (runningBusy || publishBusy)) && leaveEdits()
+  useImperativeHandle(twoScreen ? navigationRef : undefined, () => ({ canLeave }))
+  const readOnly = Boolean(opened?.previous)
+  const selectedCycle: CycleSelection | undefined = !opened ? undefined : readOnly
+    ? { kind: 'previous', draftId: opened.id } : opened.id === stripRunning?.draft_id
+      ? { kind: 'current', draftId: opened.id } : edits.current ? { kind: 'next', draftId: opened.id } : { kind: 'new' }
+  const openCycle = twoScreen && opened && selectedCycle?.kind === 'next' && edits.current
+    ? { draft_id: opened.id, updated_at: drafts.find(draft => draft.draft_id === opened.id)?.updated_at ?? '', intake: edits.current.intake } : undefined
+  const cycleDrafts = twoScreen ? drafts.filter(draft => draft.draft_id !== openCycle?.draft_id)
+    .map(draft => ({ ...draft, intake: names[draft.draft_id]?.revision === draft.revision ? names[draft.draft_id] : undefined })) : []
+  const cycles = classifyCycles(cycleDrafts, stripRunning, today ?? '', openCycle)
+  function selectCycle(selection: CycleSelection) {
+    if (attemptedCycle && ((selection.kind === 'new' && selectedCycle?.kind === 'new')
+      || ('draftId' in selection && selection.draftId === opened?.id))) {
+      setAttemptedCycle(undefined)
+      setMessage('')
+    } else if (selection.kind === 'new') create()
+    else void load(selection)
+  }
+  async function updateRunningAfterPublish() {
+    const currentId = openRef.current?.id
+    const linked = await readRunning(null)
+    if (!alive.current || openRef.current?.id !== currentId || !linked) return
+    setStripRunning(linked)
+    const current = openRef.current
+    if (current?.id === linked.draft_id) {
+      setRunning(linked)
+      const completed = runningCompleted(linked)
+      if (completed.length) open({ ...current, initial: edits.current ?? current.initial, completed, mount: current.mount + 1 })
+    }
+  }
+
   function copyFromLibrary(record: CoachCycleDraftRecord, clientName: string) {
     if (busyRef.current || pending.current || blocked || !leaveEdits()) return
     try {
@@ -568,7 +770,6 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       setMessage(`Copied “${record.source.intake.name}” from ${clientName} into a new draft for ${athleteName}, starting ${new Date(`${start}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}. Check the weights for ${athleteName}, then save or publish.`)
     } catch { setMessage('That cycle could not be copied. Open it on its own client and check its sheet.') }
   }
-  const [published, setPublished] = useState('')
   const publishSection = useRef<HTMLElement>(null)
   let legacyRecovery = false
   if (excelBetaReview?.nextCycleApi) {
@@ -576,19 +777,26 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   }
   const nextCycle = Boolean(excelBetaReview?.nextCycleApi && !legacyRecovery)
   const betaReview = excelBetaReview?.nextCycleApi && !legacyRecovery ? <CoachExcelNextCyclePreview api={excelBetaReview.nextCycleApi} gateEpoch={excelBetaReview.gateEpoch} reviewEpoch={reviewEpoch} autoPreview={publishRequest} autoPublish
-    onBusyChange={setPublishBusy} onNeedsAttention={() => setDrawer(true)} onPublished={note => { setPublished(note); setMessage('') }}
+    onBusyChange={setPublishBusy} onNeedsAttention={() => setDrawer(true)} onPublished={note => { setPublished(note); setMessage(''); if (twoScreen) void updateRunningAfterPublish() }}
     athleteName={athleteName} currentProgram={currentProgram}
     input={{ gym, athlete, draft: opened?.id ?? '', expected_revision: opened?.revision ?? 0 }} sourceHash={opened?.sourceHash ?? ''} ownerSubject={ownerSubject}
-    recoveryOnly={betaRecoveryOnly} disabled={fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
+    recoveryOnly={betaRecoveryOnly} disabled={readOnly || fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
     onConflict={() => { clearPublishPreview(); setBlocked(true); setMessage('The saved draft or current program changed. Your edits remain here. Reload the saved draft before previewing again.') }}
     onAccessEnded={allowRecovery => { open(null); edits.current = null; pending.current = null; setDrafts([]); setTemplates([]); setBetaRecoveryOnly(Boolean(allowRecovery)); setFatal(true) }} />
     : excelBetaReview && <CoachExcelBetaSavedDraftPreview api={excelBetaReview.previewApi} publishApi={excelBetaReview.publishApi} gateEpoch={excelBetaReview.gateEpoch} reviewEpoch={reviewEpoch}
     input={{ gym, athlete, draft: opened?.id ?? '', expected_revision: opened?.revision ?? 0 }} sourceHash={opened?.sourceHash ?? ''} ownerSubject={ownerSubject}
-    recoveryOnly={betaRecoveryOnly || legacyRecovery} disabled={fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
+    recoveryOnly={betaRecoveryOnly || legacyRecovery} disabled={readOnly || fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
     onConflict={() => { clearPublishPreview(); setBlocked(true); setMessage('The saved draft or current program changed. Your edits remain here. Reload the saved draft before previewing again.') }}
     onAccessEnded={allowRecovery => { open(null); edits.current = null; pending.current = null; setDrafts([]); setTemplates([]); setBetaRecoveryOnly(Boolean(allowRecovery)); setFatal(true) }} />
   if (fatal) return <section className="ccd-workspace"><p role="alert">Draft access ended. Sign in again or return to your client list.</p><button onClick={onBack}>Back to clients</button>{betaRecoveryOnly && betaReview}</section>
   return <section className="ccd-workspace" aria-label="Private cycle drafts">
+    {twoScreen ? <header className="ccb-header">
+      <h1>{athleteName}</h1>
+      <CoachCycleStrip cycles={cycles} running={stripRunning} selected={selectedCycle} attempted={attemptedCycle}
+        disabled={loading || busy || publishBusy || runningBusy} onSelect={selectCycle} />
+      {(listFailed || intakeReadFailed) && <p className="ccd-note">Some cycles could not be loaded. <button disabled={busy || loading || publishBusy || runningBusy} onClick={() => void refresh()}>Refresh drafts</button></p>}
+      {drafts.length === 100 && <p className="ccd-note">Showing up to 100 drafts. Older drafts may not be listed.</p>}
+    </header> : <>
     <header className="ccd-header">
       <div className="ccd-title"><p className="ccd-crumb">{athleteName} / Training cycle</p><h1>Training cycle · {athleteName}</h1>
         <div className="ccd-picker"><label><span className="ccd-sr">Open cycle</span><select aria-label="Open cycle" value={opened && drafts.some(draft => draft.draft_id === opened.id) ? opened.id : ''} disabled={busy || loading} onChange={event => { if (event.target.value) void load(event.target.value) }}>
@@ -601,25 +809,39 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       <div className="ccd-header-actions">{libraryClients ? <button aria-expanded={library} onClick={() => setLibrary(true)}>Library</button> : null}{excelBetaReview ? <button className="ccd-quiet" aria-expanded={drawer} onClick={() => setDrawer(true)}>Publish status</button> : null}<button disabled={busy} onClick={() => { if (leaveEdits()) onBack() }}>Back to client</button></div>
     </header>
     <StatusStrip currentProgram={currentProgram} opened={opened ? (edits.current?.intake ?? opened.initial?.intake ?? null) : null} history={athleteHistory ? historyState : null} running={Boolean(running && opened && running.draft_id === opened.id)} />
+    </>}
     {running && opened && running.draft_id === opened.id && <RunningNote state={running} />}
     <p role="status" className="ccd-message">{message}</p>
     {published && <div className="ccd-published" role="status"><span aria-hidden="true">✓</span><p>{published}</p><button className="ccd-quiet" onClick={() => setDrawer(true)}>Details</button><button className="ccd-quiet" aria-label="Dismiss" onClick={() => setPublished('')}>×</button></div>}
-    {opened && (hasPending || blocked) && <div className="ccd-actions">
+    {opened && !readOnly && (hasPending || blocked) && <div className="ccd-actions">
       {hasPending && !blocked && <button disabled={busy} onClick={() => void retryPending()}>Retry unconfirmed save</button>}
       {blocked && <button disabled={busy} onClick={() => void load(opened.id)}>Reload saved draft (discard edits)</button>}
     </div>}
-    {opened && <CoachSheetEditorProof key={`${opened.id}:${opened.mount}`} initialDraft={opened.initial} initialClientId={athlete} cycleId={opened.id} clientOptions={[{ id: athlete, name: athleteName }]} localPersistence={false} serverClean={sourceClean} onDraftChange={draftChanged} onSaveDraft={save}
+    {twoScreen && <CoachBuilderToolbar sheet={sheet} state={toolbarState}
+      published={Boolean(opened?.revision && stripRunning && stripRunning.draft_id === opened.id
+        && stripRunning.published_draft_revision === stripRunning.draft_revision && opened.revision === stripRunning.draft_revision)}
+      busy={loading || busy || publishBusy || runningBusy} saveBlocked={blocked || fatal}
+      onLibrary={libraryClients ? () => setLibrary(true) : undefined} onStatus={() => setDrawer(true)} drawerOpen={drawer}
+      onCopy={opened?.previous ? () => copyFromLibrary(opened.previous!, athleteName) : undefined} />}
+    {readOnly && <p className="ccb-readonly">This cycle's dates have passed, so it opens read-only. Use as start for next cycle to reuse it.</p>}
+    {opened && <CoachSheetEditorProof key={`${opened.id}:${opened.mount}`} initialDraft={opened.initial} initialClientId={athlete} cycleId={opened.id} clientOptions={[{ id: athlete, name: athleteName }]} localPersistence={false} serverClean={sourceClean} onDraftChange={readOnly ? undefined : draftChanged} onSaveDraft={readOnly ? undefined : save}
       exerciseReference={athleteHistory ? name => <ExercisePastPerformance name={name} state={historyState} layout="table" /> : undefined}
-      onPublishReady={running && running.draft_id === opened.id ? () => void publishRunning() : nextCycle ? () => { setPublished(''); setPublishRequest(value => value + 1) } : undefined} publishBusy={publishBusy || runningBusy} layout="workspace" completedWorkouts={opened.completed} exerciseByWeek={EXERCISE_BY_WEEK} />}
+      percentMaxes={percentMaxes} onConvertPercent={readOnly ? undefined : setConversion}
+      onPublishReady={readOnly ? undefined : running && running.draft_id === opened.id
+        ? runningApi ? () => void publishRunning() : undefined
+        : nextCycle ? () => { setPublished(''); setPublishRequest(value => value + 1) } : undefined} publishBusy={publishBusy || runningBusy} layout={twoScreen ? 'two-screen' : 'workspace'}
+      toolbarRef={twoScreen ? sheet : undefined} onToolbarState={twoScreen ? setToolbarState : undefined} readOnly={readOnly} completedWorkouts={opened.completed} exerciseByWeek={EXERCISE_BY_WEEK} />}
+    {conversion && <CoachConvertPercentDialog {...conversion} onClose={() => setConversion(null)}
+      apply={changes => { conversion.apply(changes); setConversion(null) }} />}
     {/* One render site for the publish panel, outside the editor's key, so opening or saving a draft never remounts an in-flight publish.
         The drawer only hides it; a pending publication opens it by itself. */}
-    {excelBetaReview && <><div className={drawer || betaPublicationPending || Boolean(betaRecoveryError) ? 'ccd-scrim open' : 'ccd-scrim'} onClick={() => { if (!betaPublicationPending) setDrawer(false) }} />
+    {(excelBetaReview || twoScreen) && <><div className={drawer || betaPublicationPending || Boolean(betaRecoveryError) ? 'ccd-scrim open' : 'ccd-scrim'} onClick={() => { if (!betaPublicationPending) setDrawer(false) }} />
       <aside ref={publishSection} className={drawer || betaPublicationPending || Boolean(betaRecoveryError) ? 'ccd-publish ccd-drawer open' : 'ccd-publish ccd-drawer'} aria-label="Publish details" inert={!(drawer || betaPublicationPending || Boolean(betaRecoveryError))}>
-        <div className="ccd-drawer-head"><h2>Publish details</h2><button onClick={() => setDrawer(false)}>Back to sheet</button></div>{betaReview}</aside></>}
+        <div className="ccd-drawer-head"><h2>Publish details</h2><button onClick={() => setDrawer(false)}>Back to sheet</button></div>{betaReview ?? <p>Publishing is unavailable for this cycle.</p>}</aside></>}
     {library && libraryClients && <><div className="ccd-scrim open" onClick={() => setLibrary(false)} />
       <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} erasedApi={erasedAthleteDraftApi} gym={gym} clients={libraryClients} targetName={athleteName} onUse={copyFromLibrary} onClose={() => setLibrary(false)} /></aside></>}
     {opened && <div className="ccd-danger-zone"><button className="ccd-quiet ccd-danger" disabled={busy || opened.revision < 1 || hasPending || blocked || Boolean(publicationRecovery) || Boolean(publicationRecoveryError) || betaPublicationPending || Boolean(betaRecoveryError)} onClick={() => void remove()}>Delete private draft</button><span>{opened.revision ? `Saved revision ${opened.revision}` : 'Not saved yet'}</span></div>}
-    {templateApi && <details className="ccd-library ccd-templates"><summary>Reusable cycle templates</summary><section aria-label="Reusable cycle templates">
+    {templateApi && !readOnly && <details className="ccd-library ccd-templates"><summary>Reusable cycle templates</summary><section aria-label="Reusable cycle templates">
       <h2>Reusable cycle templates</h2><p>Your private templates are available across clients in this gym. Check reusable instructions for client-specific information.</p>
       <div className="ccd-actions"><button disabled={busy || templateLoading} onClick={() => void refreshTemplates()}>Refresh templates</button><button disabled={busy || !opened?.revision || hasPending || blocked || hasTemplatePending} onClick={saveTemplate}>Save saved cycle as template</button>{hasTemplatePending && <button disabled={busy} onClick={() => { if (templatePending.current) void runTemplateMutation(templatePending.current) }}>Retry unconfirmed template change</button>}</div>
       {templateLoading ? <p>Loading templates…</p> : templateFailed ? <p>Template list could not be loaded. Refresh templates to retry.</p> : !templates.length ? <p>No reusable templates saved.</p> : <>
@@ -630,12 +852,12 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       </>}
       {templates.length === 100 && <p>Showing up to 100 templates. Older templates may not be listed.</p>}
     </section></details>}
-    {!excelBetaReview && excelPreviewApi && <CoachExcelSavedDraftPreview api={excelPreviewApi} publishApi={excelPublishApi} reviewEpoch={reviewEpoch}
+    {!readOnly && !excelBetaReview && excelPreviewApi && <CoachExcelSavedDraftPreview api={excelPreviewApi} publishApi={excelPublishApi} reviewEpoch={reviewEpoch}
       input={{ gym, athlete, draft: opened?.id ?? '', expected_revision: opened?.revision ?? 0 }} sourceHash={opened?.sourceHash ?? ''} ownerSubject={ownerSubject}
       disabled={busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
       onConflict={() => { clearPublishPreview(); setBlocked(true); setMessage('The saved draft or current program changed. Your edits remain here. Reload the saved draft before previewing again.') }}
       onAccessEnded={() => { open(null); edits.current = null; pending.current = null; setDrafts([]); setTemplates([]); setFatal(true) }} />}
-    {publishPreviewApi && <section className="ccd-library ccd-publish-preview" aria-label="Server cycle preview">
+    {!readOnly && publishPreviewApi && <section className="ccd-library ccd-publish-preview" aria-label="Server cycle preview">
       <h2>Server cycle preview</h2><p>Preview only · publishing unavailable. The server checks the saved worksheet without changing athlete programs.</p>
       <button disabled={busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending} onClick={() => void previewSavedCycle()}>Preview saved cycle on server</button>
       {!opened?.revision && <p>Open or save a private draft before requesting a preview.</p>}
@@ -646,8 +868,8 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       {publishPreview && <CoachCycleServerPreview preview={publishPreview} />}
     </section>}
     {publicationRecoveryError && <p role="alert">{publicationRecoveryError} Publication and draft deletion remain unavailable in this browser.</p>}
-    {publicationRecovery && commitV2Api && (!opened?.revision || opened.id !== publicationRecovery.draft) && <section className="ccd-library" aria-label="Retained cycle publication recovery"><h2>Recover an earlier publication request</h2><p>This request remains tied to its original client and draft, even if that draft is no longer in the list. Check its historical status before taking another publication action.</p><CoachCycleV2Publish key={`${publicationRecovery.owner}:${publicationRecovery.draft}`} api={commitV2Api} openPending={openPending} scope={publicationRecovery} review={null} onReviewInvalidated={() => clearPublishPreview()} onAccessEnded={() => { open(null); setFatal(true) }} /></section>}
-    {!publicationRecoveryError && previewV2Api && ownerSubject && opened?.revision && (!publicationRecovery || publicationRecovery.draft === opened.id) && Number.isSafeInteger(previewV2AdmissionVersion) && Number(previewV2AdmissionVersion) > 0 && <CoachCycleV2Review key={reviewEpoch} api={previewV2Api} commitApi={commitV2Api} openPending={openPending} onPendingStored={() => setPublicationTick(value => value + 1)}
+    {publicationRecovery && commitV2Api && (readOnly || !opened?.revision || opened.id !== publicationRecovery.draft) && <section className="ccd-library" aria-label="Retained cycle publication recovery"><h2>Recover an earlier publication request</h2><p>This request remains tied to its original client and draft, even if that draft is no longer in the list. Check its historical status before taking another publication action.</p><CoachCycleV2Publish key={`${publicationRecovery.owner}:${publicationRecovery.draft}`} api={commitV2Api} openPending={openPending} scope={publicationRecovery} review={null} onReviewInvalidated={() => clearPublishPreview()} onAccessEnded={() => { open(null); setFatal(true) }} /></section>}
+    {!readOnly && !publicationRecoveryError && previewV2Api && ownerSubject && opened?.revision && (!publicationRecovery || publicationRecovery.draft === opened.id) && Number.isSafeInteger(previewV2AdmissionVersion) && Number(previewV2AdmissionVersion) > 0 && <CoachCycleV2Review key={reviewEpoch} api={previewV2Api} commitApi={commitV2Api} openPending={openPending} onPendingStored={() => setPublicationTick(value => value + 1)}
       input={{ gym, athlete, draft: opened?.id ?? '', expected_revision: opened?.revision ?? 0, expected_admission_version: previewV2AdmissionVersion! }}
       ownerSubject={ownerSubject} sourceHash={opened?.sourceHash ?? ''} disabled={busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
       onConflict={() => { clearPublishPreview(); setBlocked(true); setMessage('The saved source, pilot scope or assignment changed. Reload the saved draft before reviewing again.') }}

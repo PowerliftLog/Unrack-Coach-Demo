@@ -1,0 +1,70 @@
+.ccb-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ccb-header h1 { margin: 0; font-size: 28px; }
+.ccb-cycle-strip, .ccb-toolbar, .ccb-tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ccb-cycle-strip { align-items: stretch; }
+.ccb-cycle-strip button, .ccb-toolbar button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ccb-cycle-strip button:hover:not(:disabled), .ccb-toolbar button:hover:not(:disabled) { border-color: var(--border-strong); }
+.ccb-cycle-strip button:disabled, .ccb-toolbar button:disabled { opacity: .55; cursor: default; }
+.ccb-step { min-width: 28px; }
+.ccb-cycle {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 110px;
+  max-width: 205px;
+  padding: 8px 12px;
+  text-align: left;
+}
+.ccb-cycle-new { border-style: dashed; }
+.ccb-cycle strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccb-cycle small { font: 600 10px 'IBM Plex Mono', monospace; text-transform: uppercase; }
+.ccb-cycle span, .ccb-cycle small, .ccb-tool-group span { color: var(--text-muted); }
+.ccb-cycle span, .ccb-tool-group span { font-size: 12px; }
+.ccb-cycle[aria-current="true"] { border-color: var(--accent); box-shadow: inset 0 -3px var(--accent); }
+
+.ccb-toolbar {
+  position: sticky;
+  top: 56px;
+  z-index: 25;
+  padding: 8px;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.ccb-toolbar button { min-height: 30px; padding: 4px 8px; }
+.ccb-tool-group:not(:last-child) { padding-right: 8px; border-right: 1px solid var(--border); }
+.ccb-tool-end { margin-left: auto; }
+.ccb-toolbar button[aria-expanded="true"], .ccb-toolbar button[aria-pressed="true"] { border-color: var(--accent); }
+.ccb-toolbar .ccb-primary { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 600; }
+.ccb-toolbar .ccb-status { font-weight: 600; }
+.ccb-toolbar .ccb-status-published { color: var(--green); background: var(--green-soft); }
+.ccb-toolbar .ccb-status-review { color: var(--red); background: var(--red-soft); }
+/* Match the sheet's yellow prescription flags. The theme's amber alias follows the primary accent. */
+.ccb-toolbar .ccb-status-draft { color: #6d4e10; background: #fff0b8; }
+.ccb-hint { display: block; padding: 8px 0; }
+.ccb-start > h1 { margin: 0 0 12px; }
+.ccb-readonly { margin: 8px 0; color: var(--text-muted); }
+
+@media (max-width: 760px) {
+  .ccb-toolbar button, .ccb-cycle-strip button { min-height: 44px; }
+}
