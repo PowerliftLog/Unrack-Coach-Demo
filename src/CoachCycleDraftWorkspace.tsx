@@ -2,7 +2,7 @@ import CoachExcelNextCyclePreview from './CoachExcelNextCyclePreview'
 import { readNextCycleRecovery, nextCycleRecoveryKey } from './coach-excel-next-cycle-recovery'
 import { coachExcelBetaPublicationRecoveryKey, readCoachExcelBetaPublicationRecovery, COACH_EXCEL_BETA_RECOVERY_CHANGED } from './coach-excel-publication-recovery'
 import type { createCoachExcelPublishApi } from './lib/coach-excel-publish-api'
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import { useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import type { Sheet } from '@fortune-sheet/core'
 import CoachSheetEditorProof, { nameStarts, validStructure, type CoachSheetActions, type CoachSheetDraft, type CoachSheetToolbarState } from './review/CoachSheetEditorProof'
 import CoachCycleServerPreview from './CoachCycleServerPreview'
@@ -23,9 +23,11 @@ import type { CoachExerciseHistoryV1, PercentageProgrammingApi } from './lib/coa
 import { createPercentMaxResolver, type PercentMaxResolver } from './lib/coach-percent-resolution'
 import { CoachConvertPercentDialog, type PercentConversionRequest } from './CoachConvertPercentDialog'
 import { CoachExcelNextCycleError } from './lib/coach-excel-next-cycle-client'
-import type { CoachCycleRunningState, CoachCycleRunningUpdateInput } from './lib/coach-excel-next-cycle-api'
+import type { CoachCycleRunningState, CoachCycleRunningUpdateInput, CoachExcelNextCyclePublishResult } from './lib/coach-excel-next-cycle-api'
+import { ModalDialog } from './ModalDialog'
 import { CoachBuilderToolbar } from './CoachBuilderToolbar'
-import { CoachCycleStrip, classifyCycles, type CycleSelection } from './CoachCycleStrip'
+import { CoachCycleStrip, classifyCycles, runningCycleProgress, type CycleDraft, type CycleSelection } from './CoachCycleStrip'
+import { builderStatus, cycleSendState, queuedDraftId, type Queued } from './lib/cycle-send-state'
 import './coach-cycle-draft-workspace.css'
 
 export type CoachExcelBetaReview = {
@@ -64,13 +66,60 @@ export type CoachCycleDraftWorkspaceProps = {
   getProgrammingMaxesV1?: PercentageProgrammingApi['getProgrammingMaxesV1']
   getAthleteTrackingV1?: PercentageProgrammingApi['getAthleteTrackingV1']
   layout?: 'two-screen'
-  today?: string
+  today: string
   initialDraftId?: string
   navigationRef?: Ref<CoachBuilderNavigation>
   onBack(): void
 }
-type OpenDraft = { id: string; revision: number; initial?: CoachSheetDraft; saved?: string; sourceHash?: string; mount: number; completed?: { day: string; week: number }[]; previous?: CoachCycleDraftRecord }
-export type CoachBuilderNavigation = { canLeave(): boolean }
+type OpenDraft = { id: string; revision: number; initial?: CoachSheetDraft; saved?: string; sourceHash?: string; savedAt?: string; mount: number; completed?: { day: string; week: number }[]; previous?: CoachCycleDraftRecord }
+export type CoachBuilderNavigation = { canLeave(): boolean; requestLeave(): Promise<boolean> }
+type Decision = 'stay' | 'continue' | 'save'
+type BuilderDialog = { title: string; body: string; proceed: string; save?: boolean }
+
+function useBuilderDialog() {
+  const [dialog, setDialog] = useState<BuilderDialog | null>(null)
+  const resolve = useRef<((answer: Decision) => void) | null>(null)
+  const titleId = useId()
+  const bodyId = useId()
+  useEffect(() => () => { resolve.current?.('stay'); resolve.current = null }, [])
+
+  function ask(details: BuilderDialog) {
+    if (resolve.current) return Promise.resolve<Decision>('stay')
+    return new Promise<Decision>(answer => { resolve.current = answer; setDialog(details) })
+  }
+  function answer(value: Decision) {
+    const finish = resolve.current
+    resolve.current = null
+    setDialog(null)
+    finish?.(value)
+  }
+
+  const modal = dialog && <ModalDialog key={dialog.title} className="dialog ccb-confirm" box labelledBy={titleId} describedBy={bodyId}
+    onEscape={() => answer('stay')} onBackdropClick={() => answer('stay')} initialFocus={dialog.save ? '[data-save-and-leave]' : undefined}>
+      <h2 id={titleId}>{dialog.title}</h2>
+      <p id={bodyId}>{dialog.body}</p>
+      <div className="dialog-actions">
+        <button type="button" className="button outline" onClick={() => answer('stay')}>Stay</button>
+        <button type="button" className={dialog.save ? 'button outline' : 'button primary'} onClick={() => answer('continue')}>{dialog.proceed}</button>
+        {dialog.save && <button type="button" className="button primary" data-save-and-leave onClick={() => answer('save')}>Save and leave</button>}
+      </div>
+  </ModalDialog>
+  return { ask, modal }
+}
+
+function useBuilderBeforeUnload(shouldWarn: () => boolean) {
+  const shouldWarnRef = useRef(shouldWarn)
+  shouldWarnRef.current = shouldWarn
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!shouldWarnRef.current()) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [])
+}
 type Running = Extract<CoachCycleRunningState, { linked: true }>
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const dayName = (weekday: number) => WEEKDAY_NAMES[weekday - 1] ?? `Day ${weekday}`
@@ -127,8 +176,14 @@ export function CoachBuilderStart({ api, gym, clients, onStarted, navigationRef 
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const { ask, modal } = useBuilderDialog()
+  useBuilderBeforeUnload(() => Boolean(pending.current))
   useImperativeHandle(navigationRef, () => ({
-    canLeave: () => !inFlight.current && (!pending.current || window.confirm('Leave this setup? The unconfirmed draft may already be stored.')),
+    canLeave: () => !inFlight.current && !pending.current,
+    requestLeave: async () => !inFlight.current && (!pending.current || await ask({
+      title: 'Leave this setup?', body: 'The unconfirmed draft may already be stored. You can stay and retry the same save.',
+      proceed: 'Leave setup',
+    }) === 'continue'),
   }))
 
   async function submit(request: CoachCycleDraftSaveInput) {
@@ -167,6 +222,7 @@ export function CoachBuilderStart({ api, gym, clients, onStarted, navigationRef 
         }
         void submit({ gym, athlete: source.intake.client, draft: crypto.randomUUID(), request_id: crypto.randomUUID(), expected_revision: 0, source })
       }} />
+    {modal}
     {saving && <p role="status">Creating draft…</p>}
     {message && <p role="alert">{message}</p>}
     {!saving && pending.current && <button className="button outline" onClick={() => { if (pending.current) void submit(pending.current) }}>Retry unconfirmed save</button>}
@@ -182,6 +238,16 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const sheet = useRef<CoachSheetActions>(null)
   const [toolbarState, setToolbarState] = useState<CoachSheetToolbarState | null>(null)
   const [stripRunning, setStripRunning] = useState<Running | null>(null)
+  const [priorRunningDraft, setPriorRunningDraft] = useState<CycleDraft>()
+  const [queued, setQueuedState] = useState<Queued | null>(null)
+  const queueRef = useRef<Queued | null>(null)
+  const queuedRead = useRef<Promise<void> | null>(null)
+  function setQueued(value: Queued | null) {
+    queueRef.current = value
+    setQueuedState(value)
+  }
+  const sendReceipt = useRef<{ result: CoachExcelNextCyclePublishResult; name: string } | null>(null)
+  const { ask, modal } = useBuilderDialog()
   const [attemptedCycle, setAttemptedCycle] = useState<CycleSelection>()
   const [intakeReadFailed, setIntakeReadFailed] = useState(false)
   const [historyState, setHistoryState] = useState<AthleteHistoryState>({ status: 'loading' })
@@ -226,6 +292,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const [loading, setLoading] = useState(true)
   const [listFailed, setListFailed] = useState(false)
   const [message, setMessage] = useState('')
+  const note = (text: string) => setMessage(twoScreen ? '' : text)
   const [blocked, setBlocked] = useState(false)
   const [fatal, setFatal] = useState(false)
   const [betaRecoveryOnly, setBetaRecoveryOnly] = useState(false)
@@ -242,6 +309,28 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       return await api.runningState({ gym, athlete, draft, expected_gate_epoch: excelBetaReview.gateEpoch })
     } catch { return null }
   }
+  function refreshQueued() {
+    if (queuedRead.current) return queuedRead.current
+    const read = excelBetaReview?.nextCycleApi?.queuedState
+    if (!twoScreen || !excelBetaReview || !read) return
+    const input = { gym, athlete, expected_gate_epoch: excelBetaReview.gateEpoch }
+    queuedRead.current = Promise.resolve().then(async () => {
+      try {
+        const state = await read(input)
+        if (alive.current) setQueued(state.queued ? state : null)
+      } catch {
+        // The sheet and running state remain usable when the queue cannot be read.
+        if (alive.current) setQueued(null)
+      }
+    }).finally(() => { queuedRead.current = null })
+    return queuedRead.current
+  }
+  async function refreshQueuedAfterMutation() {
+    // A read started before the mutation may still describe the old queue.
+    if (queuedRead.current) await queuedRead.current
+    if (alive.current) await refreshQueued()
+  }
+
   async function readRunning(draft: string | null): Promise<Running | null> {
     const state = await readRunningState(draft)
     return state?.linked ? state : null
@@ -368,13 +457,45 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       .then(rows => { if (active) setNames(value => ({ ...value, ...Object.fromEntries(rows.filter(row => row !== null)) })) })
     return () => { active = false }
   }, [draftNames, drafts, api, gym, athlete]) // eslint-disable-line react-hooks/exhaustive-deps
-  function leaveEdits() {
-    if (templatePending.current && !window.confirm('A template change is unconfirmed and may already be stored. Leave this draft before retrying the exact template request?')) return false
-    return !openRef.current || (!pending.current && (!edits.current || snapshot(edits.current) === openRef.current.saved))
-      || window.confirm('Discard the edits in this editor and leave this draft? An unconfirmed save may already be stored on the server.')
+  const hasEdits = () => Boolean(openRef.current && edits.current && snapshot(edits.current) !== openRef.current.saved)
+  const needsLeaveDecision = () => Boolean(templatePending.current || pending.current || hasEdits())
+  useBuilderBeforeUnload(() => twoScreen && needsLeaveDecision())
+
+  function leaveEdits(): true | Promise<boolean> {
+    if (!needsLeaveDecision()) return true
+    return confirmLeaveEdits()
+  }
+  async function confirmLeaveEdits() {
+    if (templatePending.current && await ask({
+      title: 'Leave with an unconfirmed template change?',
+      body: 'The template change may already be stored. You can stay and retry the same request.',
+      proceed: 'Leave draft',
+    }) !== 'continue') return false
+
+    const current = openRef.current
+    const name = edits.current?.intake.name || current?.initial?.intake.name || 'this cycle'
+    if (pending.current) return await ask({
+      title: `Leave ${name} with an unconfirmed save?`,
+      body: 'The last save may already be stored. Leaving discards the edits in this editor. Stay to retry the same save.',
+      proceed: 'Leave draft',
+    }) === 'continue'
+    if (!hasEdits()) return true
+
+    const choice = await ask({
+      title: `Leave ${name}?`, body: 'You changed this cycle since you last saved.',
+      proceed: 'Leave without saving', save: !blocked && !current?.previous,
+    })
+    if (choice === 'stay' || !alive.current || current !== openRef.current) return false
+    if (choice === 'continue') return true
+    if (sheet.current) return sheet.current.save()
+    const draft = edits.current
+    if (!draft) return false
+    try { await save(draft); return true }
+    catch { return false }
   }
   async function refreshCycleStrip(list: CoachCycleDraftSummary[], currentRead: () => boolean) {
     const runningRead = readRunningState(null)
+    void refreshQueued()
     const labels: Record<string, DraftLabel> = {}
     let failed = false
     // Listing returns metadata only. Limit concurrent full-sheet reads and reuse unchanged labels.
@@ -399,7 +520,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     if (autoOpened.current || openRef.current) return
     autoOpened.current = true
     const saved = list.map(draft => ({ ...draft, intake: labels[draft.draft_id] }))
-    const cycles = classifyCycles(saved, linked, today ?? '')
+    const cycles = classifyCycles(saved, linked, today, undefined, queuedDraftId(queueRef.current))
     const next = cycles.next[0]
     if (initialDraftId) await load(initialDraftId, state, true)
     else if (cycles.current) await load({ kind: 'current', draftId: cycles.current.draft_id }, state ?? linked)
@@ -426,7 +547,9 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     setMessage(`No saved sheet matches the active program “${program.name}”. It may have been built outside the sheet builder. Use View programs on the client page to see it.`)
   }
   async function load(draft: string | Exclude<CycleSelection, { kind: 'new' }>, known?: CoachCycleRunningState | null, justCreated = false) {
-    if (busyRef.current || (twoScreen && (publishBusy || runningBusy)) || !leaveEdits()) return
+    if (!navigationAvailable()) return
+    const permission = leaveEdits()
+    if ((permission !== true && !await permission) || !alive.current || !navigationAvailable()) return
     const id = typeof draft === 'string' ? draft : draft.draftId
     if (typeof draft !== 'string') setAttemptedCycle(draft)
     busyRef.current = true; setBusy(true); setMessage('')
@@ -445,7 +568,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       pending.current = null; setHasPending(false); setBlocked(false)
       const linked = live ? live.linked ? live : null : twoScreen ? stripRunning : null
       const runningNow = linked?.draft_id === id ? linked : null
-      const previous = twoScreen && !justCreated && classifyCycles([{ ...record, intake: initial.intake }], linked, today ?? '').previous.length > 0
+      const previous = twoScreen && !justCreated && classifyCycles([{ ...record, intake: initial.intake }], linked, today, undefined, queuedDraftId(queueRef.current)).previous.length > 0
       setRunning(runningNow); runningRequest.current = null
       if (twoScreen) {
         setStripRunning(linked)
@@ -453,8 +576,8 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         setDrafts(list => list.map(item => item.draft_id === id ? record : item))
       }
       const completed = runningNow ? runningCompleted(runningNow) : record.completed_workouts
-      open({ id, revision: record.revision, initial, saved: snapshot(initial), sourceHash: record.source_hash, mount: (openRef.current?.mount ?? 0) + 1, ...(completed?.length ? { completed } : {}), ...(previous ? { previous: record } : {}) })
-      setMessage(runningNow || previous ? '' : `Opened private draft revision ${record.revision}.`)
+      open({ id, revision: record.revision, initial, saved: snapshot(initial), sourceHash: record.source_hash, savedAt: record.updated_at, mount: (openRef.current?.mount ?? 0) + 1, ...(completed?.length ? { completed } : {}), ...(previous ? { previous: record } : {}) })
+      note(runningNow || previous ? '' : `Opened private draft revision ${record.revision}.`)
     } catch (error) {
       if (alive.current) {
         const detail = errorMessage(error)
@@ -463,9 +586,11 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     }
     finally { busyRef.current = false; if (alive.current) setBusy(false) }
   }
-  function create() {
-    if (busyRef.current || (twoScreen && (publishBusy || runningBusy)) || !leaveEdits()) return
-    pending.current = null; setHasPending(false); setBlocked(false); setRunning(null); runningRequest.current = null; setMessage('New private draft. Create the worksheet, then save it to Coach storage.')
+  async function create() {
+    if (!navigationAvailable()) return
+    const permission = leaveEdits()
+    if ((permission !== true && !await permission) || !alive.current || !navigationAvailable()) return
+    pending.current = null; setHasPending(false); setBlocked(false); setRunning(null); runningRequest.current = null; note('New private draft. Create the worksheet, then save it to Coach storage.')
     open({ id: crypto.randomUUID(), revision: 0, mount: (openRef.current?.mount ?? 0) + 1 })
   }
   async function save(draft: CoachSheetDraft) {
@@ -485,22 +610,26 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     const request = pending.current ?? { ...scope, draft: current.id, expected_revision: current.revision, request_id: crypto.randomUUID(), source }
     clearPublishPreview()
     pending.current = request; setHasPending(true)
-    busyRef.current = true; setBusy(true); setMessage('Saving private draft…')
+    busyRef.current = true; setBusy(true); note('Saving private draft…')
     try {
       const record = await saveVerifiedDraft(api, request)
       if (!alive.current) throw new Error('Workspace closed')
       pending.current = null; setHasPending(false)
       const saved = snapshot(request.source)
-      const next = { ...current, revision: record.revision, saved, sourceHash: record.source_hash }
+      const next = { ...current, revision: record.revision, saved, sourceHash: record.source_hash, savedAt: record.updated_at }
       openRef.current = next; setOpened(next)
       setSourceClean(Boolean(edits.current && snapshot(edits.current) === saved))
+      const matchingDraft = cycles.current
+      if (matchingDraft?.draft_id === current.id && matchingDraft.revision === stripRunning?.published_draft_revision) {
+        setPriorRunningDraft(matchingDraft)
+      }
       setDrafts(list => [record, ...list.filter(item => item.draft_id !== record.draft_id)])
       if (twoScreen) setNames(labels => ({ ...labels, [record.draft_id]: labelFor(record.source.intake, record.revision) }))
       if (edits.current && snapshot(edits.current) !== saved) {
         setMessage(`Revision ${record.revision} is stored. Newer edits remain unsaved; save them next.`)
         throw new Error('Newer edits remain unsaved')
       }
-      setMessage(`Private draft saved and verified at revision ${record.revision}. Nothing was published.`)
+      note(`Private draft saved and verified at revision ${record.revision}. Nothing was published.`)
     } catch (error) {
       if (alive.current && pending.current) setMessage(`${errorMessage(error)}${blockedError(error) ? '' : ' Save is unconfirmed; retry the same save before submitting a new source. Your edits remain here.'}`)
       throw error
@@ -546,12 +675,19 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         }
       } catch { setMessage('Publication recovery cannot be checked in this browser. Draft deletion is unavailable until recovery is restored.'); return }
     }
-    if (!window.confirm(excelBetaReview?.nextCycleApi ? 'Delete this private cycle draft? This also discards the edits in this editor. Deleting the draft cancels any queued program built from it. The athlete stays on their current program.' : 'Delete this private cycle draft? This also discards the edits in this editor. Existing athlete programs are unaffected.')) return
+    if (await ask({
+      title: 'Delete this draft?',
+      body: excelBetaReview?.nextCycleApi
+        ? 'This deletes the saved draft and discards your edits. Deleting the draft cancels any queued program built from it. The athlete stays on their current program.'
+        : 'This deletes the saved draft and discards your edits. The athlete keeps their existing programs.',
+      proceed: 'Delete this draft',
+    }) !== 'continue' || !alive.current || openRef.current !== current || busyRef.current) return
     busyRef.current = true; setBusy(true)
     try {
       await api.delete({ ...scope, draft: current.id, expected_revision: current.revision, request_id: crypto.randomUUID() })
       if (!alive.current) return
       open(null); setDrafts(list => list.filter(item => item.draft_id !== current.id)); setMessage('Private draft deleted. Nothing was published.')
+      void refreshQueuedAfterMutation()
     } catch (error) {
       if (alive.current) { setBlocked(true); setMessage(`${errorMessage(error)} Delete was not confirmed. Reload the draft list and saved version before trying another delete.`) }
     } finally { busyRef.current = false; if (alive.current) setBusy(false); if (excelBetaReview?.nextCycleApi) setTimeout(() => window.dispatchEvent(new CustomEvent(COACH_EXCEL_BETA_RECOVERY_CHANGED, { detail: coachExcelBetaPublicationRecoveryKey(ownerSubject, scope) })), 0) }
@@ -592,24 +728,35 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       setMessage(`${errorMessage(error)}${terminal ? ' Current draft edits are preserved.' : ' Template change is unconfirmed. Retry the same template request before another template change.'}`)
     } finally { busyRef.current = false; if (alive.current) setBusy(false) }
   }
-  function saveTemplate() {
+  async function saveTemplate() {
     const current = openRef.current
     if (!templateApi || busyRef.current || templatePending.current || pending.current || blocked || !current?.revision || !current.sourceHash) return
     if (!edits.current || snapshot(edits.current) !== current.saved) { setMessage('Save and verify the current draft edits before creating a reusable template.'); return }
     try { extractCoachCycleTemplate(JSON.parse(snapshot(edits.current))) }
     catch { setMessage('This draft cannot become a template yet. Use literal text cells and a valid generated worksheet; formulas or conflicting source representations need correction.'); return }
-    if (!window.confirm('Save this cycle as your reusable template? Exercise names and all weekly prescriptions and instructions will be retained. Check them for client-specific information first.')) return
+    if (await ask({
+      title: 'Save as a reusable template?',
+      body: 'The template keeps exercise names, weekly prescriptions and instructions. Check them for client-specific information first.',
+      proceed: 'Save template',
+    }) !== 'continue' || !alive.current || current !== openRef.current || hasEdits()) return
     void runTemplateMutation({ operation: 'create', input: { gym, athlete, draft: current.id, template: crypto.randomUUID(), request_id: crypto.randomUUID(), expected_revision: current.revision, expected_source_hash: current.sourceHash } })
   }
   async function applyTemplate() {
-    if (!templateApi || busyRef.current || templatePending.current || pending.current || blocked || !selectedTemplate || !targetDate || !targetUnit || !leaveEdits()) return
+    if (!templateApi || busyRef.current || templatePending.current || pending.current || blocked || !selectedTemplate || !targetDate || !targetUnit) return
+    const permission = leaveEdits()
+    if ((permission !== true && !await permission) || !alive.current || busyRef.current) return
     const sourceBeforeRead = snapshot(edits.current)
     busyRef.current = true; setBusy(true)
     try {
       const record = await templateApi.read({ gym, template: selectedTemplate })
       if (!alive.current) return
       const copy = copyCoachCycleTemplate(record.snapshot, { athleteId: athlete, clientName: athleteName, start: targetDate, unit: targetUnit, ...(targetName.trim() ? { name: targetName.trim() } : {}) })
-      if (sourceBeforeRead !== snapshot(edits.current) && !window.confirm('The current draft changed while the template loaded. Discard those newer edits and open the template copy?')) return
+      if (sourceBeforeRead !== snapshot(edits.current) && await ask({
+        title: 'Open the template copy?',
+        body: 'You made more edits while the template loaded. Opening the copy discards those newer edits.',
+        proceed: 'Discard edits and open copy',
+      }) !== 'continue') return
+      if (!alive.current) return
       const initial = { ...copy.source, sheets: copy.source.sheets as Sheet[] }
       open({ id: copy.draftId, revision: 0, initial, mount: (openRef.current?.mount ?? 0) + 1 })
       setBlocked(false)
@@ -617,8 +764,12 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     } catch (error) { if (alive.current) setMessage(error instanceof CoachCycleTemplateError ? errorMessage(error) : 'The template could not be copied. Check its contents, start date and default unit. Current draft edits are preserved.') }
     finally { busyRef.current = false; if (alive.current) setBusy(false) }
   }
-  function deleteTemplate() {
-    if (!selectedTemplate || busyRef.current || templatePending.current || !window.confirm('Delete this reusable template? Copies already made from it remain unchanged.')) return
+  async function deleteTemplate() {
+    if (!selectedTemplate || busyRef.current || templatePending.current) return
+    if (await ask({
+      title: 'Delete this reusable template?', body: 'This removes the reusable template. Cycles made from it keep their own copies.',
+      proceed: 'Delete template',
+    }) !== 'continue' || !alive.current) return
     void runTemplateMutation({ operation: 'delete', input: { gym, template: selectedTemplate, request_id: crypto.randomUUID(), expected_revision: 1 } })
   }
   function draftChanged(draft: CoachSheetDraft) {
@@ -674,7 +825,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   async function publishRunning() {
     const current = openRef.current, api2 = runningApi
     if (!current || !running || !api2?.runningUpdate || !excelBetaReview || runningBusy) return
-    setRunningBusy(true); setPublished(''); setMessage('Checking what the athlete has done…')
+    setRunningBusy(true); setPublished(''); note('Checking what the athlete has done…')
     try {
       const fresh = await readRunning(current.id)
       if (!alive.current) return
@@ -688,24 +839,36 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       }
       setRunning(fresh)
       if (fresh.opened.length && !runningRequest.current
-        && !window.confirm(`${athleteName} opened ${fresh.opened.map(dayLabel).join(', ')} in the last 3 hours and may be working out now. A workout locks as soon as they log a set. Publish the update anyway?`)) {
+        && await ask({
+          title: 'Send changes while the athlete may be working out?',
+          body: `${athleteName} opened ${fresh.opened.map(dayLabel).join(', ')} in the last 3 hours and may be working out now. A workout locks as soon as they log a set.`,
+          proceed: 'Send changes',
+        }) !== 'continue') {
         setMessage('Not published. Your saved edits remain here.'); return
       }
+      if (!alive.current) return
       const input: CoachCycleRunningUpdateInput = runningRequest.current && runningRequest.current.draft === current.id && runningRequest.current.expected_revision === current.revision
         ? runningRequest.current
         : { request_id: crypto.randomUUID(), gym, athlete, draft: current.id, expected_revision: current.revision, expected_assignment: fresh.assignment_id,
             expected_done: fresh.done.map(row => [row.week, row.weekday] as [number, number]), expected_gate_epoch: excelBetaReview.gateEpoch }
       runningRequest.current = input
-      setMessage('Publishing the update…')
+      note('Publishing the update…')
       const result = await api2.runningUpdate(input)
       if (!alive.current) return
       runningRequest.current = null
-      if (result.status === 'no_changes') { setMessage(`Nothing to update: the workouts still to come already match this sheet.`); return }
+      if (result.status === 'no_changes') {
+        setMessage('Nothing to update: the workouts still to come already match this sheet.')
+        if (twoScreen) await updateRunningAfterPublish()
+        return
+      }
       const count = result.changed_days.length
       setMessage('')
       setPublished(`Updated ${count} ${count === 1 ? 'workout' : 'workouts'} in “${fresh.program_name}” for ${athleteName} (${result.changed_days.map(([week, weekday]) => dayLabel({ week, weekday })).join(', ')}). Done workouts did not change.`)
-      const after = await readRunning(current.id)
-      if (alive.current && after) { setRunning(after); if (twoScreen) setStripRunning(after) }
+      if (twoScreen) await updateRunningAfterPublish()
+      else {
+        const after = await readRunning(current.id)
+        if (alive.current && after) setRunning(after)
+      }
     } catch (error) {
       if (!alive.current) return
       if (error instanceof CoachExcelNextCycleError) {
@@ -728,17 +891,35 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   const [publishRequest, setPublishRequest] = useState(0)
   const [publishBusy, setPublishBusy] = useState(false)
   const [library, setLibrary] = useState(false)
-  const canLeave = () => !busyRef.current && !(twoScreen && (runningBusy || publishBusy)) && leaveEdits()
-  useImperativeHandle(twoScreen ? navigationRef : undefined, () => ({ canLeave }))
+  const navigationAvailable = () => !busyRef.current && !(twoScreen && (runningBusy || publishBusy))
+  useImperativeHandle(twoScreen ? navigationRef : undefined, () => ({
+    canLeave: () => navigationAvailable() && !needsLeaveDecision(),
+    requestLeave: async () => navigationAvailable() && await leaveEdits(),
+  }))
   const readOnly = Boolean(opened?.previous)
   const selectedCycle: CycleSelection | undefined = !opened ? undefined : readOnly
     ? { kind: 'previous', draftId: opened.id } : opened.id === stripRunning?.draft_id
       ? { kind: 'current', draftId: opened.id } : edits.current ? { kind: 'next', draftId: opened.id } : { kind: 'new' }
   const openCycle = twoScreen && opened && selectedCycle?.kind === 'next' && edits.current
-    ? { draft_id: opened.id, updated_at: drafts.find(draft => draft.draft_id === opened.id)?.updated_at ?? '', intake: edits.current.intake } : undefined
+    ? { draft_id: opened.id, revision: opened.revision, updated_at: drafts.find(draft => draft.draft_id === opened.id)?.updated_at ?? '', intake: edits.current.intake } : undefined
   const cycleDrafts = twoScreen ? drafts.filter(draft => draft.draft_id !== openCycle?.draft_id)
     .map(draft => ({ ...draft, intake: names[draft.draft_id]?.revision === draft.revision ? names[draft.draft_id] : undefined })) : []
-  const cycles = classifyCycles(cycleDrafts, stripRunning, today ?? '', openCycle)
+  const cycles = classifyCycles(cycleDrafts, stripRunning, today, openCycle, queuedDraftId(queued))
+  const runningEnd = currentProgram?.id === stripRunning?.assignment_id ? currentProgram?.endOn : undefined
+  const runningSelected = opened && stripRunning?.draft_id === opened.id ? stripRunning : null
+  const queuedSelected = opened?.id === queuedDraftId(queued) ? queued : null
+  const progress = stripRunning && runningCycleProgress(stripRunning, cycles.current, runningEnd, priorRunningDraft)
+  const status = opened && (toolbarState || edits.current) ? builderStatus({
+    sendState: cycleSendState({
+      kind: runningSelected ? 'running' : queuedSelected ? 'queued' : 'draft',
+      revision: opened.revision,
+      published: runningSelected?.published_draft_revision ?? queuedSelected?.published_draft_revision,
+    }),
+    dirty: Boolean(edits.current && !sourceClean),
+    savedAt: opened.savedAt,
+    queuedStart: queuedSelected?.start_on,
+    progress: runningSelected && progress,
+  }) : undefined
   function selectCycle(selection: CycleSelection) {
     if (attemptedCycle && ((selection.kind === 'new' && selectedCycle?.kind === 'new')
       || ('draftId' in selection && selection.draftId === opened?.id))) {
@@ -749,19 +930,26 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
   }
   async function updateRunningAfterPublish() {
     const currentId = openRef.current?.id
-    const linked = await readRunning(null)
-    if (!alive.current || openRef.current?.id !== currentId || !linked) return
-    setStripRunning(linked)
+    void refreshQueuedAfterMutation()
+    const live = await readRunningState(null)
+    if (!alive.current || openRef.current?.id !== currentId) return
+    const linked = live?.linked ? live : null
+    if (live) setStripRunning(linked)
+    if (!linked) { if (live) setRunning(null); return }
     const current = openRef.current
     if (current?.id === linked.draft_id) {
       setRunning(linked)
       const completed = runningCompleted(linked)
-      if (completed.length) open({ ...current, initial: edits.current ?? current.initial, completed, mount: current.mount + 1 })
-    }
+      if (snapshot(completed) !== snapshot(current.completed ?? [])) {
+        open({ ...current, initial: edits.current ?? current.initial, completed, mount: current.mount + 1 })
+      }
+    } else setRunning(null)
   }
 
-  function copyFromLibrary(record: CoachCycleDraftRecord, clientName: string) {
-    if (busyRef.current || pending.current || blocked || !leaveEdits()) return
+  async function copyFromLibrary(record: CoachCycleDraftRecord, clientName: string) {
+    if (busyRef.current || pending.current || blocked) return
+    const permission = leaveEdits()
+    if ((permission !== true && !await permission) || !alive.current || busyRef.current) return
     try {
       const start = nextMondayIso()
       const copy = copyCoachCycleTemplate(extractCoachCycleTemplate(record.source), { athleteId: athlete, clientName: athleteName, start, unit: record.source.intake.unit })
@@ -776,8 +964,40 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     try { legacyRecovery = Boolean(readCoachExcelBetaPublicationRecovery(ownerSubject, { gym, athlete })) } catch { legacyRecovery = true }
   }
   const nextCycle = Boolean(excelBetaReview?.nextCycleApi && !legacyRecovery)
-  const betaReview = excelBetaReview?.nextCycleApi && !legacyRecovery ? <CoachExcelNextCyclePreview api={excelBetaReview.nextCycleApi} gateEpoch={excelBetaReview.gateEpoch} reviewEpoch={reviewEpoch} autoPreview={publishRequest} autoPublish
-    onBusyChange={setPublishBusy} onNeedsAttention={() => setDrawer(true)} onPublished={note => { setPublished(note); setMessage(''); if (twoScreen) void updateRunningAfterPublish() }}
+  const nextClient = excelBetaReview?.nextCycleApi
+  const previewClient = twoScreen && nextClient ? {
+    ...nextClient,
+    async cancel(input: Parameters<typeof nextClient.cancel>[0]) {
+      const result = await nextClient.cancel(input)
+      if (alive.current) {
+        setPublished('')
+        void updateRunningAfterPublish()
+      }
+      return result
+    },
+    async publish(input: Parameters<typeof nextClient.publish>[0]) {
+      const name = (openRef.current?.id === input.draft && edits.current?.intake.name) || 'The new cycle'
+      const result = await nextClient.publish(input)
+      sendReceipt.current = { result, name }
+      return result
+    },
+  } : nextClient
+  function announceSend(note: string) {
+    const receipt = sendReceipt.current
+    sendReceipt.current = null
+    if (twoScreen && receipt) {
+      const { result, name } = receipt
+      const left = result.remaining
+      setPublished(result.status === 'pending'
+        ? left ? `Sent. ${athleteName} finishes the current cycle first (${left} workout${left === 1 ? '' : 's'} left); ${name} starts after that.`
+          : `Sent. ${name} is waiting to start.`
+        : `Sent. ${name} is on the phone.`)
+    } else setPublished(note)
+    setMessage('')
+    if (twoScreen) void updateRunningAfterPublish()
+  }
+  const betaReview = excelBetaReview && previewClient && !legacyRecovery ? <CoachExcelNextCyclePreview api={previewClient} gateEpoch={excelBetaReview.gateEpoch} reviewEpoch={reviewEpoch} autoPreview={publishRequest} autoPublish
+    onBusyChange={setPublishBusy} onNeedsAttention={() => setDrawer(true)} onPublished={announceSend}
     athleteName={athleteName} currentProgram={currentProgram}
     input={{ gym, athlete, draft: opened?.id ?? '', expected_revision: opened?.revision ?? 0 }} sourceHash={opened?.sourceHash ?? ''} ownerSubject={ownerSubject}
     recoveryOnly={betaRecoveryOnly} disabled={readOnly || fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
@@ -788,11 +1008,13 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
     recoveryOnly={betaRecoveryOnly || legacyRecovery} disabled={readOnly || fatal || busy || !opened?.revision || !sourceClean || hasPending || blocked || hasTemplatePending}
     onConflict={() => { clearPublishPreview(); setBlocked(true); setMessage('The saved draft or current program changed. Your edits remain here. Reload the saved draft before previewing again.') }}
     onAccessEnded={allowRecovery => { open(null); edits.current = null; pending.current = null; setDrafts([]); setTemplates([]); setBetaRecoveryOnly(Boolean(allowRecovery)); setFatal(true) }} />
+  const resultBanner = published && <div className="ccd-published" role="status"><span aria-hidden="true">✓</span><p>{published}</p><button className="ccd-quiet" onClick={() => setDrawer(true)}>Details</button><button className="ccd-quiet" aria-label="Dismiss" onClick={() => setPublished('')}>×</button></div>
   if (fatal) return <section className="ccd-workspace"><p role="alert">Draft access ended. Sign in again or return to your client list.</p><button onClick={onBack}>Back to clients</button>{betaRecoveryOnly && betaReview}</section>
-  return <section className="ccd-workspace" aria-label="Private cycle drafts">
+  return <section className={twoScreen ? "ccd-workspace ccd-two-screen" : "ccd-workspace"} aria-label="Private cycle drafts">
+    {modal}
     {twoScreen ? <header className="ccb-header">
       <h1>{athleteName}</h1>
-      <CoachCycleStrip cycles={cycles} running={stripRunning} selected={selectedCycle} attempted={attemptedCycle}
+      <CoachCycleStrip cycles={cycles} running={stripRunning} progress={progress} queued={queued} loading={loading} selected={selectedCycle} attempted={attemptedCycle}
         disabled={loading || busy || publishBusy || runningBusy} onSelect={selectCycle} />
       {(listFailed || intakeReadFailed) && <p className="ccd-note">Some cycles could not be loaded. <button disabled={busy || loading || publishBusy || runningBusy} onClick={() => void refresh()}>Refresh drafts</button></p>}
       {drafts.length === 100 && <p className="ccd-note">Showing up to 100 drafts. Older drafts may not be listed.</p>}
@@ -806,23 +1028,24 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         {listFailed && <p className="ccd-note">Draft list could not be loaded. Refresh drafts to retry.</p>}
         {drafts.length === 100 && <p className="ccd-note">Showing up to 100 drafts. Older drafts may not be listed.</p>}
       </div>
-      <div className="ccd-header-actions">{libraryClients ? <button aria-expanded={library} onClick={() => setLibrary(true)}>Library</button> : null}{excelBetaReview ? <button className="ccd-quiet" aria-expanded={drawer} onClick={() => setDrawer(true)}>Publish status</button> : null}<button disabled={busy} onClick={() => { if (leaveEdits()) onBack() }}>Back to client</button></div>
+      <div className="ccd-header-actions">{libraryClients ? <button aria-expanded={library} onClick={() => setLibrary(true)}>Library</button> : null}{excelBetaReview ? <button className="ccd-quiet" aria-expanded={drawer} onClick={() => setDrawer(true)}>Publish status</button> : null}<button disabled={busy} onClick={async () => { const permission = leaveEdits(); if (permission === true || await permission) onBack() }}>Back to client</button></div>
     </header>
     <StatusStrip currentProgram={currentProgram} opened={opened ? (edits.current?.intake ?? opened.initial?.intake ?? null) : null} history={athleteHistory ? historyState : null} running={Boolean(running && opened && running.draft_id === opened.id)} />
     </>}
-    {running && opened && running.draft_id === opened.id && <RunningNote state={running} />}
-    <p role="status" className="ccd-message">{message}</p>
-    {published && <div className="ccd-published" role="status"><span aria-hidden="true">✓</span><p>{published}</p><button className="ccd-quiet" onClick={() => setDrawer(true)}>Details</button><button className="ccd-quiet" aria-label="Dismiss" onClick={() => setPublished('')}>×</button></div>}
+    {running && opened && running.draft_id === opened.id && <RunningNote state={running} twoScreen={twoScreen} />}
+    {!twoScreen && <p role="status" className="ccd-message">{message}</p>}
+    {!twoScreen && resultBanner}
     {opened && !readOnly && (hasPending || blocked) && <div className="ccd-actions">
       {hasPending && !blocked && <button disabled={busy} onClick={() => void retryPending()}>Retry unconfirmed save</button>}
       {blocked && <button disabled={busy} onClick={() => void load(opened.id)}>Reload saved draft (discard edits)</button>}
     </div>}
     {twoScreen && <CoachBuilderToolbar sheet={sheet} state={toolbarState}
-      published={Boolean(opened?.revision && stripRunning && stripRunning.draft_id === opened.id
-        && stripRunning.published_draft_revision === stripRunning.draft_revision && opened.revision === stripRunning.draft_revision)}
+      status={status} sendChanges={Boolean(runningSelected || queuedSelected)}
       busy={loading || busy || publishBusy || runningBusy} saveBlocked={blocked || fatal}
       onLibrary={libraryClients ? () => setLibrary(true) : undefined} onStatus={() => setDrawer(true)} drawerOpen={drawer}
       onCopy={opened?.previous ? () => copyFromLibrary(opened.previous!, athleteName) : undefined} />}
+    {twoScreen && resultBanner}
+    {twoScreen && message && <p role="status" className="ccd-toolbar-notice">{message}</p>}
     {readOnly && <p className="ccb-readonly">This cycle's dates have passed, so it opens read-only. Use as start for next cycle to reuse it.</p>}
     {opened && <CoachSheetEditorProof key={`${opened.id}:${opened.mount}`} initialDraft={opened.initial} initialClientId={athlete} cycleId={opened.id} clientOptions={[{ id: athlete, name: athleteName }]} localPersistence={false} serverClean={sourceClean} onDraftChange={readOnly ? undefined : draftChanged} onSaveDraft={readOnly ? undefined : save}
       exerciseReference={athleteHistory ? name => <ExercisePastPerformance name={name} state={historyState} layout="table" /> : undefined}
@@ -840,7 +1063,7 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
         <div className="ccd-drawer-head"><h2>Publish details</h2><button onClick={() => setDrawer(false)}>Back to sheet</button></div>{betaReview ?? <p>Publishing is unavailable for this cycle.</p>}</aside></>}
     {library && libraryClients && <><div className="ccd-scrim open" onClick={() => setLibrary(false)} />
       <aside className="ccd-drawer open ccd-library-drawer" aria-label="Library"><CoachCycleLibrary api={api} erasedApi={erasedAthleteDraftApi} gym={gym} clients={libraryClients} targetName={athleteName} onUse={copyFromLibrary} onClose={() => setLibrary(false)} /></aside></>}
-    {opened && <div className="ccd-danger-zone"><button className="ccd-quiet ccd-danger" disabled={busy || opened.revision < 1 || hasPending || blocked || Boolean(publicationRecovery) || Boolean(publicationRecoveryError) || betaPublicationPending || Boolean(betaRecoveryError)} onClick={() => void remove()}>Delete private draft</button><span>{opened.revision ? `Saved revision ${opened.revision}` : 'Not saved yet'}</span></div>}
+    {opened && <div className="ccd-danger-zone"><button className="ccd-quiet ccd-danger" disabled={busy || opened.revision < 1 || hasPending || blocked || Boolean(publicationRecovery) || Boolean(publicationRecoveryError) || betaPublicationPending || Boolean(betaRecoveryError)} onClick={() => void remove()}>{twoScreen ? 'Delete this draft' : 'Delete private draft'}</button>{!twoScreen && <span>{opened.revision ? `Saved revision ${opened.revision}` : 'Not saved yet'}</span>}</div>}
     {templateApi && !readOnly && <details className="ccd-library ccd-templates"><summary>Reusable cycle templates</summary><section aria-label="Reusable cycle templates">
       <h2>Reusable cycle templates</h2><p>Your private templates are available across clients in this gym. Check reusable instructions for client-specific information.</p>
       <div className="ccd-actions"><button disabled={busy || templateLoading} onClick={() => void refreshTemplates()}>Refresh templates</button><button disabled={busy || !opened?.revision || hasPending || blocked || hasTemplatePending} onClick={saveTemplate}>Save saved cycle as template</button>{hasTemplatePending && <button disabled={busy} onClick={() => { if (templatePending.current) void runTemplateMutation(templatePending.current) }}>Retry unconfirmed template change</button>}</div>
@@ -897,10 +1120,10 @@ function StatusStrip({ currentProgram, opened, history, running = false }: { cur
 }
 
 /** Running program: what is locked, what the athlete opened recently, and offline finishes. */
-function RunningNote({ state }: { state: Running }) {
+function RunningNote({ state, twoScreen }: { state: Running; twoScreen: boolean }) {
   const offline = state.done.filter(item => item.earlier_version)
   return <div className="ccd-running" role="note" aria-label="Running program">
-    <p><strong>Running program.</strong> {state.done.length ? `${state.done.length} ${state.done.length === 1 ? 'workout is' : 'workouts are'} done and locked (grey). ` : 'No workouts done yet. '}Publish updates the workouts still to come; done ones never change.</p>
+    {twoScreen ? <p><strong>Running now.</strong> Changes go to the workouts not done yet.</p> : <p><strong>Running program.</strong> {state.done.length ? `${state.done.length} ${state.done.length === 1 ? 'workout is' : 'workouts are'} done and locked (grey). ` : 'No workouts done yet. '}Publish updates the workouts still to come; done ones never change.</p>}
     {state.opened.length > 0 && <p className="ccd-running-warn">Opened in the last 3 hours, may be in progress: {state.opened.map(dayLabel).join(', ')}.</p>}
     {offline.map(item => <p key={`${item.week}:${item.weekday}`} className="ccd-running-offline">{dayLabel(item)}: done offline from the earlier version.</p>)}
   </div>

@@ -1367,6 +1367,8 @@ export type CoachErasedAthleteDraftSummaryV1 = {
   draft_id: string; updated_at: string; name: string; weeks: number | null; days: string[]; unit: 'lb' | 'kg' | null
 }
 export type CoachErasedAthleteDraftsV1 = { contract_version: 1; items: CoachErasedAthleteDraftSummaryV1[] }
+export type CoachErasedAthleteDraftCursor = Pick<CoachErasedAthleteDraftSummaryV1, 'updated_at' | 'draft_id'>
+export type CoachErasedAthleteDraftsV2 = CoachErasedAthleteDraftsV1 & { next_cursor: CoachErasedAthleteDraftCursor | null }
 export type CoachErasedAthleteDraftV1 = {
   contract_version: 1; draft_id: string; updated_at: string; revision: number; source: CoachCycleDraftSource
 }
@@ -1390,6 +1392,7 @@ export interface October18CoachApi {
   setCoachClientRemovedV1(input: CoachClientRemovalInputV1): Promise<CoachClientRemovalContextV1>
   getCoachRemovedClientsV1(input: { gym: string; cursor: string | null; page_size: number }): Promise<CoachRemovedClientsV1>
   getCoachErasedAthleteDraftsV1(input: { gym: string; page_limit: number }): Promise<CoachErasedAthleteDraftsV1>
+  getCoachErasedAthleteDraftsV2(input: { gym: string; page_limit: number; cursor_updated_at: string | null; cursor_draft: string | null }): Promise<CoachErasedAthleteDraftsV2>
   readCoachErasedAthleteDraftV1(input: { gym: string; draft: string }): Promise<CoachErasedAthleteDraftV1>
   eraseCoachAthleteV1(input: CoachEraseAthleteInputV1): Promise<CoachEraseAthleteResultV1>
   getCoachPersonalTrackingRequestsV2(input: { gym: string; athlete: string | null; cursor: string | null; page_size: number }): Promise<CoachPersonalTrackingRequestsV2>
@@ -1420,11 +1423,12 @@ export type CoachApiErrorCode = 'session_expired' | 'stale_builder_version' | 'd
   | 'profile_changed' | 'candidate_evidence_changed' | 'percentage_preview_changed'
   | 'cycle_not_active' | 'cycle_workouts_incomplete'
   | 'settings_changed' | 'feature_unavailable' | 'client_membership_changed' | 'personal_review_changed' | 'personal_row_changed' | 'personal_snapshot_changed'
-  | 'erase_confirm_required' | 'erase_refused'
+  | 'erase_confirm_required' | 'erase_refused' | 'erase_timed_out'
 
 const coachApiErrorMessages: Record<CoachApiErrorCode, string> = {
   erase_confirm_required: "Type the client's name exactly as it appears on the roster.",
   erase_refused: "This athlete's data can't be deleted from Coach right now. Ask the athlete to use Delete my data in the app, or contact support.",
+  erase_timed_out: "Nothing was deleted. This athlete has more history than one delete can handle. Contact Unrack support and we'll delete it for you.",
   feature_unavailable: 'This update is not available yet. Retry shortly; your saved data is unchanged.',
   client_membership_changed: 'This client’s membership changed. Refresh and review before trying again.',
   personal_review_changed: 'This tracking request changed. Refresh and review it again.',
@@ -3878,7 +3882,7 @@ function trustedPhase4Error(value: unknown, status: number, errors: Phase4ErrorM
 const normalizeDashboardSearch = (value: string | null) => value === null ? null : value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US') || null
 
 const oct18Errors: Phase4ErrorMap = { ...phase55DashboardErrors, 403: ['access_denied', 'feature_unavailable'], 409: ['client_membership_changed', 'personal_review_changed', 'personal_row_changed', 'personal_snapshot_changed', 'serialization_retry', 'request_id_drift', 'dashboard_read_changed'] }
-const coachErasureErrors: Phase4ErrorMap = { ...oct18Errors, 409: ['serialization_retry', 'erase_refused'], 422: ['erase_confirm_required'] }
+const coachErasureErrors: Phase4ErrorMap = { ...oct18Errors, 409: ['serialization_retry', 'erase_refused', 'erase_timed_out'], 422: ['erase_confirm_required'] }
 
 function erasedAthleteDraftSummary(value: unknown): value is CoachErasedAthleteDraftSummaryV1 {
   return exactKeys(value, ['draft_id', 'updated_at', 'name', 'weeks', 'days', 'unit'])
@@ -4334,6 +4338,19 @@ const phase55CalendarCreate = (value: unknown, input: CreateCalendarProgramInput
       decode: (value): value is CoachErasedAthleteDraftsV1 => exactKeys(value, ['contract_version', 'items'])
         && value.contract_version === 1 && phase4Array(value.items, Math.min(100, input.page_limit), erasedAthleteDraftSummary)
         && uniqueBy(value.items, row => row.draft_id),
+    }),
+    getCoachErasedAthleteDraftsV2: input => post<CoachErasedAthleteDraftsV2>('/api/coach-erased-athlete-drafts-v2', input, {
+      requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: phase4NavigationMaxBytes, trustedErrors: oct18Errors,
+      decode: (value): value is CoachErasedAthleteDraftsV2 => exactKeys(value, ['contract_version', 'items', 'next_cursor'])
+        && value.contract_version === 1 && phase4Array(value.items, Math.min(100, input.page_limit), erasedAthleteDraftSummary)
+        && uniqueBy(value.items, row => row.draft_id)
+        && (value.next_cursor === null || (
+          exactKeys(value.next_cursor, ['updated_at', 'draft_id'])
+          && phase4Timestamp(value.next_cursor.updated_at) && phase4Uuid(value.next_cursor.draft_id)
+          && value.items.length === input.page_limit
+          && value.next_cursor.updated_at === value.items.at(-1)?.updated_at
+          && value.next_cursor.draft_id === value.items.at(-1)?.draft_id
+        )),
     }),
     readCoachErasedAthleteDraftV1: input => post<CoachErasedAthleteDraftV1>('/api/coach-erased-athlete-draft-read-v1', input, {
       requestMaximum: phase4DefaultRequestMaxBytes, resultMaximum: COACH_CYCLE_DRAFT_READ_MAX_BYTES, trustedErrors: oct18Errors,

@@ -1,3 +1,4 @@
+import { localToday, shortDate } from './lib/local-date'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ManualTabList } from './ManualTabList'
 import { MaxReportInbox } from './MaxReportInbox'
@@ -103,7 +104,7 @@ function MaxRecords({ records, liftName }: { records: ProgrammingMaxRecordV1[]; 
   return <ul className="athlete-max-list">{records.map(record => <li key={record.id}>
     <strong>{liftName(record.exercise_id)}</strong>
     <span>{record.max_type === 'training_max' ? 'Training max' : 'Tested 1RM'} · {record.value} {record.unit}</span>
-    <time dateTime={record.effective_from}>Effective {record.effective_from}</time>
+    <time dateTime={record.effective_from}>Since {shortDate(record.effective_from)}</time>
   </li>)}</ul>
 }
 
@@ -145,7 +146,7 @@ function AthleteProfile({
   const [tracking, setTracking] = useState<AthleteTrackingV1 | null>(null)
   const [maxesError, setMaxesError] = useState<string | null>(null)
   const [trackingError, setTrackingError] = useState<string | null>(null)
-  const [maxDate, setMaxDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [maxDate, setMaxDate] = useState(() => localToday())
   const [maxValue, setMaxValue] = useState('')
   const [maxExercise, setMaxExercise] = useState('')
   const [maxType, setMaxType] = useState<'tested_1rm' | 'training_max'>('training_max')

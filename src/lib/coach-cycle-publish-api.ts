@@ -2,6 +2,7 @@
 // accepts a browser candidate, actor, program, source body or interpretation.
 import { readCoachCycleDraftJson } from './coach-cycle-draft-api'
 import { COACH_CYCLE_PUBLISH_LIMITS } from './coach-cycle-limits'
+import { amrapMinimumFromNote } from './coach-sheet-interpret'
 export const COACH_CYCLE_PUBLISH_PATHS = { preview: '/api/coach-cycle-publish-preview-v1', commit: '/api/coach-cycle-publish-commit-v1' } as const
 export type CoachCyclePublishOperation = keyof typeof COACH_CYCLE_PUBLISH_PATHS
 export const COACH_CYCLE_PUBLISH_REQUEST_MAX_BYTES = 2048
@@ -15,13 +16,15 @@ export type CoachCyclePublishInput = CoachCyclePublishPreviewInput | CoachCycleP
 export type CoachCyclePublishSource = { sheet: 'cycle'; row: number; column: number; address: string; day?: string; week?: number; block_id?: string }
 export type CoachCycleSqlGroup = {
   mode: 'replace'; identity_token: null; ordinal: number; sets_mode: 'exact'; sets_min: number; sets_max: null
-  dose_mode: 'reps' | 'time' | 'distance'; reps_mode: 'exact' | 'range' | null; dose_min: number; dose_max: number | null
-  distance_unit: 'm' | 'km' | 'ft' | 'mi' | null; laterality: 'bilateral' | 'each_side'
+  laterality: 'bilateral' | 'each_side'
   load_mode: 'exact' | 'rpe' | 'qualitative' | 'bodyweight' | 'none' | 'athlete_choice'; load_basis: 'total'
   exact_weight: number | null; percent: null; percent_basis_exercise_id: null; percent_basis_max_type: null; manual_override: null
   rpe_min: number | null; rpe_max: number | null; qualitative: 'L' | 'M' | 'MH' | 'H' | null; unit_override: 'lb' | 'kg' | null
-  rest_seconds: null; note: null
-}
+  rest_seconds: null
+} & (
+  | { dose_mode: 'reps' | 'time' | 'distance'; reps_mode: 'exact' | 'range' | null; dose_min: number; dose_max: number | null; distance_unit: 'm' | 'km' | 'ft' | 'mi' | null; note: null }
+  | { dose_mode: 'amrap'; reps_mode: null; dose_min: null; dose_max: null; distance_unit: null; note: string | null }
+)
 export type CoachCycleSqlExercise = { mode: 'replace'; identity_token: null; ordinal: number; group_ordinal: null; status: 'programmed'; name: string; instruction: string | null; note: null; protocol: string; exercise_id: null; track_in_metrics: false; set_groups: CoachCycleSqlGroup[] }
 export type CoachCycleSqlDay = { weekday: number; scheduled_date: string; payload: { identity_token: null; ordinal: number; label: string; subtitle: null; marked_rest: boolean; workout_instruction: null; movement_groups: []; ungrouped_exercises: CoachCycleSqlExercise[] } }
 export type CoachCycleSqlCoverage = { sheet: 'cycle'; row: number; column: number; role: 'structure' | 'exercise' | 'prescription' | 'instructions'; day: string; block_id: string | null; week: number | null; text: string }
@@ -53,12 +56,15 @@ export function isCoachCyclePublishSource(v: unknown): v is CoachCyclePublishSou
   return !Object.hasOwn(v, 'day') || weekdays.includes(String(v.day)) && integer(v.week, 1, 12) && uuid(v.block_id) && v.column % 5 === 2 && v.row >= v.week + 1
 }
 const groupKeys = ['mode','identity_token','ordinal','sets_mode','sets_min','sets_max','dose_mode','reps_mode','dose_min','dose_max','distance_unit','laterality','load_mode','load_basis','exact_weight','percent','percent_basis_exercise_id','percent_basis_max_type','manual_override','rpe_min','rpe_max','qualitative','unit_override','rest_seconds','note']
-function group(v: unknown, ordinal: number): boolean {
-  if (!exact(v, groupKeys) || v.mode !== 'replace' || v.identity_token !== null || v.ordinal !== ordinal || v.sets_mode !== 'exact' || !integer(v.sets_min, 1, 20) || v.sets_max !== null || !['bilateral', 'each_side'].includes(String(v.laterality)) || v.load_basis !== 'total' || ['percent', 'percent_basis_exercise_id', 'percent_basis_max_type', 'manual_override', 'rest_seconds', 'note'].some(key => v[key] !== null)) return false
+export function isCoachCycleSqlGroup(v: unknown, ordinal: number): v is CoachCycleSqlGroup {
+  if (!exact(v, groupKeys) || v.mode !== 'replace' || v.identity_token !== null || v.ordinal !== ordinal || v.sets_mode !== 'exact' || !integer(v.sets_min, 1, 20) || v.sets_max !== null || !['bilateral', 'each_side'].includes(String(v.laterality)) || v.load_basis !== 'total' || ['percent', 'percent_basis_exercise_id', 'percent_basis_max_type', 'manual_override', 'rest_seconds'].some(key => v[key] !== null)) return false
+  // The SQL parser emits a note only for the AMRAP N+ form (N is 1–1000).
+  if (v.note !== null && (v.dose_mode !== 'amrap' || amrapMinimumFromNote(v.note) === null)) return false
   if (v.dose_mode === 'reps') {
     if (!integer(v.dose_min, 1, 1000) || v.distance_unit !== null || (v.reps_mode === 'exact' ? v.dose_max !== null : v.reps_mode !== 'range' || !integer(v.dose_max, Number(v.dose_min) + 1, 1000))) return false
   } else if (v.dose_mode === 'time') { if (!integer(v.dose_min, 1, 9999999) || v.dose_max !== null || v.reps_mode !== null || v.distance_unit !== null) return false }
   else if (v.dose_mode === 'distance') { if (!number(v.dose_min, 0.001, 9999999.999) || v.dose_max !== null || v.reps_mode !== null || !['m', 'km', 'ft', 'mi'].includes(String(v.distance_unit))) return false }
+  else if (v.dose_mode === 'amrap') { if (v.dose_min !== null || v.dose_max !== null || v.reps_mode !== null || v.distance_unit !== null) return false }
   else return false
   if (v.rpe_min === null ? v.rpe_max !== null : !number(v.rpe_min, 1, 10, 1) || v.rpe_max !== null && (!number(v.rpe_max, Number(v.rpe_min), 10, 1) || v.rpe_max === v.rpe_min)) return false
   if (v.unit_override !== null && v.unit_override !== 'lb' && v.unit_override !== 'kg') return false
@@ -82,7 +88,7 @@ function compiled(v: unknown, draft: string): v is CoachCycleSqlCompiled {
       if (!exact(p, ['identity_token','ordinal','label','subtitle','marked_rest','workout_instruction','movement_groups','ungrouped_exercises']) || p.identity_token !== null || p.ordinal !== weekday || p.label !== weekdays[weekday-1] || p.subtitle !== null || p.workout_instruction !== null || !Array.isArray(p.movement_groups) || p.movement_groups.length !== 0 || !Array.isArray(p.ungrouped_exercises) || p.ungrouped_exercises.length > 12 || p.marked_rest !== (p.ungrouped_exercises.length === 0)) return false
       for (let ei = 0; ei < p.ungrouped_exercises.length; ei++) {
         const e = p.ungrouped_exercises[ei]
-        if (!exact(e, ['mode','identity_token','ordinal','group_ordinal','status','name','instruction','note','protocol','exercise_id','track_in_metrics','set_groups']) || e.mode !== 'replace' || e.identity_token !== null || e.ordinal !== ei + 1 || e.group_ordinal !== null || e.status !== 'programmed' || !text(e.name, 120, true) || e.instruction !== null && !text(e.instruction, 500, true) || e.note !== null || !text(e.protocol, 1000, true) || e.exercise_id !== null || e.track_in_metrics !== false || !Array.isArray(e.set_groups) || e.set_groups.length < 1 || e.set_groups.length > 20 || !e.set_groups.every((g, i) => group(g, i + 1))) return false
+        if (!exact(e, ['mode','identity_token','ordinal','group_ordinal','status','name','instruction','note','protocol','exercise_id','track_in_metrics','set_groups']) || e.mode !== 'replace' || e.identity_token !== null || e.ordinal !== ei + 1 || e.group_ordinal !== null || e.status !== 'programmed' || !text(e.name, 120, true) || e.instruction !== null && !text(e.instruction, 500, true) || e.note !== null || !text(e.protocol, 1000, true) || e.exercise_id !== null || e.track_in_metrics !== false || !Array.isArray(e.set_groups) || e.set_groups.length < 1 || e.set_groups.length > 20 || !e.set_groups.every((g, i) => isCoachCycleSqlGroup(g, i + 1))) return false
         const sets = e.set_groups.reduce((sum, g) => sum + g.sets_min, 0)
         if (sets > 20) return false
         totals.exercises++; totals.groups += e.set_groups.length; totals.sets += sets

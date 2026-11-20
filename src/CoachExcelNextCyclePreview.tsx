@@ -21,6 +21,11 @@ type Props = {
   onConflict(): void; onAccessEnded(allowHistoricalRecovery?: boolean): void
 }
 type KnownStatus = Exclude<CoachExcelNextCycleStatus, { status: 'not_found' }>
+const sendFailed = "Couldn't send this cycle. Nothing changed on the phone."
+const sendUnconfirmed = "Couldn't confirm the send. Check whether it reached the phone."
+function isAccessError(cause: unknown): cause is CoachExcelNextCycleError & { code: 'session_expired' | 'access_denied' } {
+  return cause instanceof CoachExcelNextCycleError && (cause.code === 'session_expired' || cause.code === 'access_denied')
+}
 const reasons: Record<string, string> = {
   predecessor_replaced_or_closed: 'the current program changed', another_active_assignment: 'another program is active',
   membership_revoked: 'athlete access ended', membership_revoked_or_replaced: 'athlete access changed', pairing_changed: 'the athlete connection changed',
@@ -53,7 +58,8 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
   const [, setConfirmed] = useState(false), [ready, setReady] = useState(false)
   const [busy, setBusy] = useState(false), busyRef = useRef(false)
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [recoveryError, setRecoveryError] = useState('')
-  const [statusChecked, setStatusChecked] = useState(false)
+  const [sendRetry, setSendRetry] = useState<{ epoch: number; index: number; sendAfterPreview: boolean } | null>(null)
+  const [checkedRequest, setCheckedRequest] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'cancel' | 'replace' | 'abandon' | null>(null)
   const [abandonable, setAbandonable] = useState(false)
   const rejectedRetry = useRef<string | null>(null), previousQueue = useRef<NextCycleRecovery | null>(null)
@@ -68,7 +74,8 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
   }
   async function coordinated(action: () => Promise<unknown>, wait = false) {
     if (busyRef.current) return
-    busyRef.current = true; setBusy(true); setError('')
+    busyRef.current = true; setBusy(true); setError(''); setSendRetry(null)
+    if (sendRetry) setPage(null)
     try {
       if (typeof navigator.locks?.request !== 'function') throw new Error('This browser cannot safely coordinate publication recovery across tabs.')
       await navigator.locks.request(coachExcelBetaPublicationRecoveryKey(ownerSubject, scope), { mode: 'exclusive', ifAvailable: !wait }, async lock => {
@@ -77,7 +84,7 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
       })
     } catch (cause) {
       if (!alive.current) return
-      if (cause instanceof CoachExcelNextCycleError && ['session_expired', 'access_denied'].includes(cause.code)) { setPage(null); setStatus(null); setQueued(null); onAccessEnded(cause.code === 'access_denied'); return }
+      if (isAccessError(cause)) { setPage(null); setStatus(null); setQueued(null); onAccessEnded(cause.code === 'access_denied'); return }
       if (cause instanceof CoachExcelNextCycleError && cause.code === 'conflict' && ['excel_preview_revision_stale', 'excel_preview_source_integrity'].includes(cause.reason ?? '')) onConflict()
       setError(cause instanceof Error ? cause.message : 'The server response could not be confirmed.')
     } finally { busyRef.current = false; if (alive.current) setBusy(false) }
@@ -89,7 +96,7 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     const result = await api.status({ ...scope, request_id: saved.input.request_id })
     if (!alive.current) return false
     if (result.status === 'not_found') {
-      setStatusChecked(true)
+      setCheckedRequest(saved.input.request_id)
       const canAbandon = rejectedRetry.current === saved.input.request_id && saved.firstSentAt !== undefined
         && checkedAt - saved.firstSentAt > COACH_EXCEL_NEXT_CYCLE_TIMEOUT_MS + 30000
       setAbandonable(canAbandon)
@@ -99,7 +106,7 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
       } else setNotice(canAbandon ? 'The original request was refused and a later status check found no publication. You can abandon this publish attempt and review a fresh preview.' : rejectedRetry.current === saved.input.request_id ? 'The original request was refused. Wait at least 40 seconds after sending, then check status again before abandoning this publish attempt.' : 'No publication was visible at this status snapshot. Retry keeps the original request ID and saved revision.')
       return false
     }
-    setStatus(result); setStatusChecked(false); setAbandonable(false)
+    setStatus(result); setCheckedRequest(null); setAbandonable(false)
     setQueued(result.status === 'pending' ? { id: result.queue_id, version: result.queue_version } : null)
     // Retain only metadata needed to find this queue again on this browser.
     retain({ ...saved, queueId: result.queue_id, resolved: true, rejected: false }, saved.input.request_id)
@@ -108,11 +115,18 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     else setNotice('')
     return true
   }
+  async function checkRetainedStatus(saved = recordRef.current, announce = true) {
+    try { await checkStatus(saved, announce) }
+    catch (cause) {
+      // An unresolved request already shows the status-check message and action.
+      if (!saved || saved.resolved || isAccessError(cause)) throw cause
+    }
+  }
   async function refreshStoredStatus() {
     // Another tab may finish or replace the record while this tab waits for its lock.
     const latest = readNextCycleRecovery(ownerSubject, scope)
     recordRef.current = latest; setRecord(latest)
-    if (latest) await checkStatus(latest, false)
+    if (latest) await checkRetainedStatus(latest, false)
   }
   useEffect(() => {
     alive.current = true
@@ -147,16 +161,11 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
   useEffect(() => {
     if (!autoPreview || autoPreview === autoHandled.current || disabled || recoveryOnly || unknown || !ready || recoveryError || busyRef.current) return
     autoHandled.current = autoPreview
-    void coordinated(async () => {
-      const reviewed = await preview(0, null)
-      if (!autoPublish || !reviewed || !alive.current) return
-      if (!reviewed.summary.publishable) { setNotice('The server found a problem with this cycle. Check the details below.'); onNeedsAttention?.(); return }
-      if (reviewed.summary.expected_pending_id) { setDialog('replace'); return }
-      await publish(false, reviewed)
-    })
+    void coordinated(() => reviewForPublish(0, null, autoPublish))
   }) // eslint-disable-line react-hooks/exhaustive-deps
   // Only once the work settles: an in-flight publish is briefly "unknown" by design.
-  const attention = !busy && Boolean(error || recoveryError || dialog || unknown)
+  const retrySend = sendRetry?.epoch === generation.current && !unknown ? sendRetry : null
+  const attention = !busy && Boolean(error || retrySend || recoveryError || dialog || unknown)
   const latestHandlers = useRef({ onBusyChange, onNeedsAttention }); latestHandlers.current = { onBusyChange, onNeedsAttention }
   useEffect(() => { latestHandlers.current.onBusyChange?.(busy) }, [busy])
   useEffect(() => { if (attention) latestHandlers.current.onNeedsAttention?.() }, [attention])
@@ -177,6 +186,23 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     if (status && status.queue_id !== result.summary.expected_pending_id) setStatus(null)
     return result
   }
+  async function reviewForPublish(index: number, previous: CoachExcelNextCyclePreviewPage | null, sendAfterPreview = false) {
+    const epoch = generation.current
+    let reviewed
+    try { reviewed = await preview(index, previous) }
+    catch (cause) {
+      if (!alive.current || epoch !== generation.current) return
+      if (cause instanceof CoachExcelNextCycleError && !['network', 'invalid', 'ambiguous', 'retryable'].includes(cause.code)) throw cause
+      // Keep the last reviewed page for navigation retries, including a return to page zero.
+      setPage(previous)
+      setSendRetry({ epoch, index, sendAfterPreview })
+      return
+    }
+    if (!sendAfterPreview || !reviewed || !alive.current) return
+    if (!reviewed.summary.publishable) { setNotice('The server found a problem with this cycle. Check the details below.'); onNeedsAttention?.(); return }
+    if (reviewed.summary.expected_pending_id) { setDialog('replace'); return }
+    await publish(false, reviewed)
+  }
   async function refreshStale() {
     setPage(null); setConfirmed(false); setDialog(null); setQueued(null); setStatus(null)
     if (!disabled && !recoveryOnly && !(recordRef.current && !recordRef.current.resolved)) {
@@ -195,11 +221,11 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     if (readCoachExcelBetaPublicationRecovery(ownerSubject, scope)) throw new Error('Check the earlier publish before publishing again.')
     let saved = readNextCycleRecovery(ownerSubject, scope)
     if (retry) {
-      if (!saved || saved.resolved || !statusChecked) return
+      if (!saved || saved.resolved || saved.input.request_id !== checkedRequest) return
       // Older records have no send time. Waiting from this retry cannot shorten the original wait.
       if (saved.firstSentAt === undefined) { saved = { ...saved, firstSentAt: Date.now() }; retain(saved, saved.input.request_id) }
     } else {
-      if (saved && !saved.resolved) { recordRef.current = saved; setRecord(saved); setStatusChecked(false); return }
+      if (saved && !saved.resolved) { recordRef.current = saved; setRecord(saved); setCheckedRequest(null); return }
       previousQueue.current = saved?.resolved ? saved : null
       const s = reviewed!.summary
       const predecessor = currentProgram?.id === s.expected_current_assignment ? currentProgram.name : null
@@ -210,13 +236,16 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     }
     const original = saved!
     const previouslyUncertain = retry && !original.rejected
-    setStatusChecked(false); setAbandonable(false); rejectedRetry.current = null; setConfirmed(false); setDialog(null)
+    const epoch = generation.current
+    setCheckedRequest(null); setAbandonable(false); rejectedRetry.current = null; setConfirmed(false); setDialog(null); setNotice('')
+    let needsStatus = retry
     try {
       // A serialization retry always checks the exact original request first.
       let result
       try { result = await api.publish(original.input) }
       catch (cause) {
         if (!(cause instanceof CoachExcelNextCycleError) || cause.code !== 'retryable') throw cause
+        needsStatus = true
         if (await checkStatus(original)) return
         result = await api.publish(original.input)
       }
@@ -233,19 +262,24 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
       }
     } catch (cause) {
       if (!alive.current) return
-      if (cause instanceof CoachExcelNextCycleError && ['session_expired', 'access_denied'].includes(cause.code)) throw cause
-      const rejected = !previouslyUncertain && cause instanceof CoachExcelNextCycleError && ['conflict', 'blocked', 'invalid'].includes(cause.code)
+      if (isAccessError(cause)) throw cause
+      // For publish, the client uses these codes only before transport or for explicit refusals.
+      if (!needsStatus && cause instanceof CoachExcelNextCycleError && ['network', 'invalid'].includes(cause.code)) {
+        retain(previousQueue.current, original.input.request_id); setPage(null)
+        if (epoch === generation.current) setSendRetry({ epoch, index: 0, sendAfterPreview: true })
+        return
+      }
+      const rejected = !previouslyUncertain && cause instanceof CoachExcelNextCycleError && ['conflict', 'blocked'].includes(cause.code)
       if (previouslyUncertain && cause instanceof CoachExcelNextCycleError && cause.code === 'conflict') rejectedRetry.current = original.input.request_id
       retain({ ...original, rejected, resolved: false }, original.input.request_id); setPage(null)
       try {
         const refused = rejectedRetry.current; rejectedRetry.current = null
-        try { await checkStatus({ ...original, rejected, resolved: false }) } finally { rejectedRetry.current = refused }
+        try { if (await checkStatus({ ...original, rejected, resolved: false })) return } finally { rejectedRetry.current = refused }
         if (cause instanceof CoachExcelNextCycleError && ['NEXT_CYCLE_QUEUE_VERSION_STALE', 'NEXT_CYCLE_REVIEW_STALE'].includes(cause.reason ?? '')) { await refreshStale(); return }
       } catch (statusFailure) {
-        if (statusFailure instanceof CoachExcelNextCycleError && ['session_expired', 'access_denied'].includes(statusFailure.code)) throw statusFailure
-        setNotice('Outcome unknown. Check the original request status before retrying. No replacement request has been created.')
+        if (isAccessError(statusFailure)) throw statusFailure
       }
-      setError(cause instanceof Error ? cause.message : 'The publication outcome could not be confirmed.')
+      if (cause instanceof CoachExcelNextCycleError && ['conflict', 'blocked', 'unavailable'].includes(cause.code)) setError(cause.message)
     }
   }
   async function cancel() {
@@ -269,28 +303,34 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     const latest = readNextCycleRecovery(ownerSubject, scope)
     recordRef.current = latest; setRecord(latest); setDialog(null); setAbandonable(false)
     if (!latest || latest.resolved || latest.input.request_id !== request) {
-      setPage(null); setConfirmed(false); setStatus(null); setQueued(null); setStatusChecked(false)
+      setPage(null); setConfirmed(false); setStatus(null); setQueued(null); setCheckedRequest(null)
       throw new Error('Publication recovery changed in another tab. Check the stored request status before continuing.')
     }
     // Even a previously qualifying not_found is insufficient to clear custody now.
     if (await checkStatus(latest)) return
     if (rejectedRetry.current !== request || latest.firstSentAt === undefined
       || Date.now() - latest.firstSentAt <= COACH_EXCEL_NEXT_CYCLE_TIMEOUT_MS + 30000) return
-    retain(previousQueue.current, request); setPage(null); setConfirmed(false); setAbandonable(false); setStatusChecked(false)
+    retain(previousQueue.current, request); setPage(null); setConfirmed(false); setAbandonable(false); setCheckedRequest(null)
     setNotice('Publish attempt abandoned. Preview the saved cycle again before publishing.')
   }
-  const summary = disabled || recoveryOnly ? null : page?.summary
+  const summary = disabled || recoveryOnly || sendRetry ? null : page?.summary
   const queuedKnown = queued && status?.status === 'pending' && status.queue_id === queued.id && status.queue_version === queued.version
   const queueMetadata = record?.resolved && record.queueId === queued?.id ? record : previousQueue.current?.queueId === queued?.id ? previousQueue.current : null
   const queuedName = queueMetadata?.name ?? 'Program details unavailable'
   return <section className="ccd-library" aria-label="Publish">
     <h2>{recoveryOnly ? 'Publish recovery' : `Publish to ${athleteName}`}</h2>
     {!recoveryOnly && !input.draft && <p>Choose a saved cycle at the top of the page or start a new one, then press Publish on its sheet.</p>}
-    {!recoveryOnly && input.draft && <><p>Publish on the sheet saves it, checks it and publishes it in one step. Anything that needs you, and what was sent, shows here.</p>
-      <button disabled={disabled || busy || unknown || !ready || Boolean(recoveryError)} onClick={() => void coordinated(() => preview(0, null))}>Preview</button>
+    {!recoveryOnly && input.draft && <><p>What was sent to the phone, and anything that needs you.</p>
+      <button disabled={disabled || busy || unknown || !ready || Boolean(recoveryError)} onClick={() => void coordinated(() => reviewForPublish(0, null))}>Preview</button>
       {disabled && <p>Save the worksheet to preview it.</p>}</>}
     {busy && <p role="status">Checking the saved cycle…</p>}
     {error && <p role="alert">{error}</p>}{recoveryError && <p role="alert">{recoveryError}</p>}
+    {retrySend && <div className="ccd-actions">
+      <p role="alert">{sendFailed}</p>
+      <button disabled={disabled || busy || recoveryOnly || Boolean(recoveryError)} onClick={() => void coordinated(async () => {
+        if (retrySend.epoch === generation.current) await reviewForPublish(retrySend.index, page, retrySend.sendAfterPreview)
+      })}>Try again</button>
+    </div>}
     {queued && <section aria-label="Queued next program" className="ccd-library">
       <h3>Next program queued</h3><p>{queuedName}{queuedKnown ? ` · ${status.remaining.length ? `${status.remaining.length} workout${status.remaining.length === 1 ? '' : 's'} left` : 'Waiting to start'}` : ''}</p>
       {queuedKnown ? <ul aria-label="Remaining workouts">{status.remaining.map(row => <li key={row.instance_id}>{row.label} · {row.scheduled_on === null ? 'No date' : <time dateTime={row.scheduled_on}>{row.scheduled_on}</time>}</li>)}</ul>
@@ -304,7 +344,7 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
       <p>{summary.week_count} weeks · {summary.totals.exercises} exercise prescriptions · {summary.totals.skipped} explicit skips · {summary.totals.groups} set groups · {summary.totals.sets} physical sets</p>
       <details><summary>Workout dates</summary><ul>{summary.schedule.map(day => <li key={`${day.week}:${day.weekday}`}>Week {day.week} · {day.day} · {day.scheduled_date}{day.marked_rest ? ' · explicit rest' : ''}</li>)}</ul></details>
       <p>Detail page {page.page_index + 1} of {summary.detail_page_count} · {summary.detail_item_count} exercise slots total</p>
-      <div className="ccd-actions"><button disabled={busy || page.page_index === 0} onClick={() => void coordinated(() => preview(page.page_index - 1))}>Previous page</button><button disabled={busy || page.page_index + 1 >= summary.detail_page_count} onClick={() => void coordinated(() => preview(page.page_index + 1))}>Next page</button></div>
+      <div className="ccd-actions"><button disabled={busy || page.page_index === 0} onClick={() => void coordinated(() => reviewForPublish(page.page_index - 1, page))}>Previous page</button><button disabled={busy || page.page_index + 1 >= summary.detail_page_count} onClick={() => void coordinated(() => reviewForPublish(page.page_index + 1, page))}>Next page</button></div>
       <ol start={page.items[0].item_index + 1}>{page.items.map(item => <li key={item.item_index}>
         <h4>Week {item.week} · {item.day} · {item.scheduled_date} · {item.name}</h4>
         <p>Worksheet {item.source.name.sheet}!{item.source.name.address} · prescription {item.source.prescription.address} · instructions {item.source.instruction.address}</p>
@@ -314,9 +354,11 @@ function NextCyclePreview({ api, gateEpoch, athleteName, currentProgram, input, 
     </div>}
     <section aria-label="Publish and recovery">
       {!recoveryOnly && input.draft && <button disabled={!ready || Boolean(recoveryError) || disabled || !summary?.publishable || busy || unknown} onClick={() => { if (summary?.expected_pending_id) setDialog('replace'); else void coordinated(() => publish()) }}>Publish to {athleteName}</button>}
-      {record && <div>{unknown && <p>The last publish didn't confirm. Check its status first; Retry resends the same request, so it can't publish twice.</p>}
-        <button disabled={busy} onClick={() => void coordinated(() => checkStatus().then(() => {}))}>Check publish status</button>
-        {unknown && !recoveryOnly && <button disabled={busy || !statusChecked} onClick={() => void coordinated(() => publish(true))}>Retry publish</button>}
+      {record && <div><div className="ccd-actions">
+        {unknown && !busy && <p role="alert">{sendUnconfirmed}</p>}
+        <button disabled={busy} onClick={() => void coordinated(() => checkRetainedStatus())}>Check publish status</button>
+        </div>
+        {unknown && !recoveryOnly && <button disabled={busy || checkedRequest !== record.input.request_id} onClick={() => void coordinated(() => publish(true))}>Retry publish</button>}
       </div>}
       {unknown && <button disabled={busy || !abandonable} onClick={() => setDialog('abandon')}>Abandon this publish attempt</button>}
       <p ref={statusRegion} tabIndex={-1} role="status" aria-live="polite">{notice}</p>

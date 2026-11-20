@@ -7,11 +7,13 @@ export const COACH_EXCEL_NEXT_CYCLE_PATHS = {
   preview: '/api/coach-excel-beta-preview-v2', publish: '/api/coach-excel-beta-publish-v2',
   status: '/api/coach-excel-beta-publish-status-v2', cancel: '/api/coach-excel-beta-cancel-pending-v2',
   running_state: '/api/coach-cycle-running-state-v1', running_update: '/api/coach-cycle-running-update-v1',
+  queued_state: '/api/coach-cycle-queued-state-v1',
 } as const
 export const COACH_EXCEL_NEXT_CYCLE_RPCS = {
   preview: 'coach_excel_beta_preview_v2', publish: 'coach_excel_beta_publish_v2',
   status: 'coach_excel_beta_publish_status_v2', cancel: 'coach_excel_beta_cancel_pending_v2',
   running_state: 'coach_cycle_running_state_v1', running_update: 'coach_cycle_running_update_v1',
+  queued_state: 'coach_cycle_queued_state_v1',
 } as const
 export type CoachExcelNextCycleOperation = keyof typeof COACH_EXCEL_NEXT_CYCLE_PATHS
 export const COACH_EXCEL_NEXT_CYCLE_REQUEST_MAX_BYTES = 2048
@@ -29,7 +31,8 @@ export type CoachExcelNextCycleCancelInput = { gym: string; athlete: string; que
 export type CoachCycleRunningDay = [week: number, weekday: number]
 export type CoachCycleRunningStateInput = { gym: string; athlete: string; draft: string | null; expected_gate_epoch: number }
 export type CoachCycleRunningUpdateInput = { request_id: string; gym: string; athlete: string; draft: string; expected_revision: number; expected_assignment: string; expected_done: CoachCycleRunningDay[]; expected_gate_epoch: number }
-export type CoachExcelNextCycleInput = CoachExcelNextCyclePreviewInput | CoachExcelNextCyclePublishInput | CoachExcelNextCycleStatusInput | CoachExcelNextCycleCancelInput | CoachCycleRunningStateInput | CoachCycleRunningUpdateInput
+export type CoachCycleQueuedStateInput = { gym: string; athlete: string; expected_gate_epoch: number }
+export type CoachExcelNextCycleInput = CoachExcelNextCyclePreviewInput | CoachExcelNextCyclePublishInput | CoachExcelNextCycleStatusInput | CoachExcelNextCycleCancelInput | CoachCycleRunningStateInput | CoachCycleRunningUpdateInput | CoachCycleQueuedStateInput
 export type CoachCycleRunningDone = { week: number; weekday: number; state: 'in_progress' | 'completed' | 'skipped'; performed_at: string | null; earlier_version: boolean }
 export type CoachCycleRunningState = { contract: 'coach-cycle-running-state/1'; linked: false; draft_id: string | null } | {
   contract: 'coach-cycle-running-state/1'; linked: true; draft_id: string; draft_revision: number; published_draft_revision: number
@@ -41,6 +44,10 @@ export type CoachCycleRunningUpdateResult = {
   assignment_id: string; program_id: string; done_days: CoachCycleRunningDay[]; changed_days: CoachCycleRunningDay[]
   release_id: string | null; revision_id: string | null
 }
+export type CoachCycleQueuedState = { contract: 'coach-cycle-queued-state/1'; queued: false } | ({
+  contract: 'coach-cycle-queued-state/1'; queued: true
+  assignment_id: string; program_id: string; program_name: string; start_on: string | null; queued_at: string
+} & ({ draft_id: string; published_draft_revision: number } | { draft_id: null; published_draft_revision: null }))
 const runningDay = (v: unknown): v is CoachCycleRunningDay => Array.isArray(v) && v.length === 2 && integer(v[0], 1) && v[0] <= 12 && integer(v[1], 1) && v[1] <= 7
 const runningDays = (v: unknown): v is CoachCycleRunningDay[] => Array.isArray(v) && v.length <= 84 && v.every(runningDay)
 export type CoachExcelNextCyclePreviewSummary = Omit<CoachExcelBetaPreviewSummary, 'contract' | 'contract_version' | 'active_assignment_policy' | 'fresh_only'> & {
@@ -64,6 +71,7 @@ export function isCoachExcelNextCycleInput(operation: CoachExcelNextCycleOperati
   if (operation === 'preview') return isCoachExcelBetaPreviewInput(v)
   if (operation === 'status') return exact(v, ['gym','athlete','request_id']) && [v.gym,v.athlete,v.request_id].every(uuid)
   if (operation === 'running_state') return exact(v, ['gym','athlete','draft','expected_gate_epoch']) && [v.gym,v.athlete].every(uuid) && (v.draft === null || uuid(v.draft)) && integer(v.expected_gate_epoch, 1)
+  if (operation === 'queued_state') return exact(v, ['gym','athlete','expected_gate_epoch']) && [v.gym,v.athlete].every(uuid) && integer(v.expected_gate_epoch, 1)
   if (operation === 'running_update') return exact(v, ['request_id','gym','athlete','draft','expected_revision','expected_assignment','expected_done','expected_gate_epoch'])
     && [v.request_id,v.gym,v.athlete,v.draft,v.expected_assignment].every(uuid) && integer(v.expected_revision, 1) && runningDays(v.expected_done) && integer(v.expected_gate_epoch, 1)
   if (operation === 'cancel') return exact(v, ['gym','athlete','queue_id','expected_queue_version']) && [v.gym,v.athlete,v.queue_id].every(uuid) && integer(v.expected_queue_version, 1)
@@ -147,8 +155,16 @@ export function isCoachCycleRunningUpdateResult(v: unknown, input: CoachCycleRun
     && (v.status === 'updated' ? v.changed_days.length > 0 && uuid(v.release_id) && uuid(v.revision_id)
       : v.status === 'no_changes' && v.changed_days.length === 0 && v.release_id === null && v.revision_id === null)
 }
+export function isCoachCycleQueuedState(v: unknown): v is CoachCycleQueuedState {
+  if (exact(v, ['contract','queued'])) return v.contract === 'coach-cycle-queued-state/1' && v.queued === false
+  return exact(v, ['contract','queued','assignment_id','program_id','program_name','start_on','draft_id','published_draft_revision','queued_at'])
+    && v.contract === 'coach-cycle-queued-state/1' && v.queued === true && [v.assignment_id,v.program_id].every(uuid)
+    && text(v.program_name, 200) && (v.start_on === null || date(v.start_on)) && timestamp(v.queued_at)
+    && (v.draft_id === null ? v.published_draft_revision === null : uuid(v.draft_id) && integer(v.published_draft_revision, 1))
+}
 export function isCoachExcelNextCycleResult(operation: CoachExcelNextCycleOperation, v: unknown, input: CoachExcelNextCycleInput): boolean {
   if (operation === 'running_state') return isCoachCycleRunningState(v, input as CoachCycleRunningStateInput)
+  if (operation === 'queued_state') return isCoachCycleQueuedState(v)
   if (operation === 'running_update') return isCoachCycleRunningUpdateResult(v, input as CoachCycleRunningUpdateInput)
   if (operation === 'preview') return isCoachExcelNextCyclePreviewPage(v, input as CoachExcelNextCyclePreviewInput)
   if (operation === 'publish') return isCoachExcelNextCyclePublishResult(v, input as CoachExcelNextCyclePublishInput)

@@ -1,4 +1,5 @@
 import type { CoachCyclePublishPreview, CoachCycleSqlGroup } from './lib/coach-cycle-publish-api'
+import { amrapMinimumFromNote } from './lib/coach-sheet-interpret'
 
 function columnName(index: number): string {
   let value = index + 1, name = ''
@@ -7,9 +8,11 @@ function columnName(index: number): string {
 }
 
 export function describeGroup(group: CoachCycleSqlGroup, defaultUnit: 'lb' | 'kg'): string {
-  const dose = group.dose_mode === 'reps'
-    ? `${group.dose_min}${group.dose_max === null ? '' : `–${group.dose_max}`} reps`
-    : group.dose_mode === 'time' ? `${group.dose_min} sec` : `${group.dose_min} ${group.distance_unit}`
+  const minimum = amrapMinimumFromNote(group.note)
+  const dose = group.dose_mode === 'reps' ? `${group.dose_min}${group.dose_max === null ? '' : `–${group.dose_max}`} reps`
+    : group.dose_mode === 'time' ? `${group.dose_min} sec`
+    : group.dose_mode === 'amrap' ? minimum === null ? 'max reps' : `${minimum}+ reps`
+    : `${group.dose_min} ${group.distance_unit}`
   const load = group.load_mode === 'exact' ? `${group.exact_weight} ${group.unit_override ?? defaultUnit}`
     : group.load_mode === 'qualitative' ? `${group.qualitative} intensity`
     : group.load_mode === 'bodyweight' ? 'bodyweight'

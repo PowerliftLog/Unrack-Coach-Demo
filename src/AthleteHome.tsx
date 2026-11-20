@@ -1,23 +1,25 @@
-import { useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { AthleteBuilderLink } from './CoachShell'
 import { powerliftSeries } from './ClientOverview'
 import { CoachNotes } from './CoachNotes'
 import { PowerliftTrend, type PowerliftSeries } from './PowerliftTrend'
 import type { AthleteScheduleWorkout } from './AthleteSchedulePanel'
-import { calendarWeeks, recentWorkoutRows, strengthTiles, type AthleteHomeCycle } from './lib/athlete-home-data'
+import { calendarWeeks, createWeekExerciseReader, currentCycleWorkouts, recentWorkoutRows, strengthTiles, type AthleteHomeAssignmentApi, type AthleteHomeCycle } from './lib/athlete-home-data'
 import type { CoachAthleteActivityPageV1, CoachOverviewApi, CoachRecentActivityCursorV1, CoachRecentActivityItemV1, PercentageProgrammingApi } from './lib/coach-api'
+import type { CoachCycleQueuedState } from './lib/coach-excel-next-cycle-api'
+import type { CoachExcelNextCycleApi } from './lib/coach-excel-next-cycle-client'
+import { shortDate } from './lib/local-date'
 import './athlete-home.css'
 
-type Api = Partial<CoachOverviewApi & Pick<PercentageProgrammingApi, 'getCoachAthleteCalendarV1' | 'getCoachAthleteMetricsV1' | 'getAthleteTrackingV1'>>
+type Api = AthleteHomeAssignmentApi & Partial<CoachOverviewApi & Pick<PercentageProgrammingApi, 'getCoachAthleteCalendarV1' | 'getCoachAthleteMetricsV1' | 'getAthleteTrackingV1'>>
 type AthleteScope = { api: Api; gym: string; athlete: string }
 
-const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+const activityDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' })
 const weight = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
-const workoutStatus: Record<AthleteScheduleWorkout['state'], { label: string; mark: string }> = {
-  completed: { label: 'Done', mark: '✓' },
-  skipped: { label: 'Skipped', mark: '–' },
-  in_progress: { label: 'In progress', mark: '◐' },
-  not_started: { label: 'To do', mark: '○' },
+const fullWeekday = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' })
+const dayStatus: Record<AthleteScheduleWorkout['state'], string> = {
+  completed: 'Done', skipped: 'Skipped', in_progress: 'Not done yet', not_started: 'Not done yet',
 }
 
 async function readCalendar({ api, gym, athlete }: AthleteScope) {
@@ -62,42 +64,90 @@ function SectionStatus({ status, label, retry }: { status: Read<unknown>['status
   return null
 }
 
-function Schedule({ scope, cycle, today }: { scope: AthleteScope; cycle: AthleteHomeCycle | null; today: string }) {
-  const [result, retry] = useAthleteRead(scope, readCalendar)
+type Week = ReturnType<NonNullable<ReturnType<typeof calendarWeeks>>['weekAt']>
+
+function WeekDays({ scope, readWeek, week }: {
+  scope: AthleteScope
+  readWeek: ReturnType<typeof createWeekExerciseReader>
+  week: Week
+}) {
+  const [chosen, setChosen] = useState<string>()
+  const workouts = useMemo(() => week.days.flatMap(day => day.workouts), [week])
+  const read = useCallback(async () => readWeek?.(workouts), [readWeek, workouts])
+  const [details, retry] = useAthleteRead(scope, read, workouts.length > 0)
+  const selected = chosen ?? week.days.find(day => day.today && day.workouts.length > 0)?.date
+  const openDay = week.days.find(day => day.date === selected)
+  return <>
+    <ol className="ah-week">
+      {week.days.map(day => <li key={day.date}>
+        <button type="button" className={day.workouts.length ? 'ah-day' : 'ah-day ah-day-rest'}
+          aria-current={day.today ? 'date' : undefined} aria-pressed={day.date === selected}
+          onClick={() => setChosen(day.date)}>
+          <time className="ah-meta" dateTime={day.date}>{weekday.format(Date.parse(day.date))} {Number(day.date.slice(-2))}</time>
+          {day.workouts.map(workout => {
+            const lift = details.status === 'ready' ? details.data.get(workout.workout_instance_id)?.[0]?.name : undefined
+            return <span className="ah-day-lift" key={workout.workout_instance_id} title={lift}>{lift ?? 'Workout'}</span>
+          })}
+          {day.today ? <span>Today</span> : day.workouts.length === 0 && <span>Rest</span>}
+        </button>
+      </li>)}
+    </ol>
+    {openDay && <div className="ah-day-detail">
+      {openDay.workouts.length === 0 && <h3>{fullWeekday.format(Date.parse(openDay.date))} · Rest</h3>}
+      {openDay.workouts.map(workout => {
+        const exercises = details.status === 'ready' ? details.data.get(workout.workout_instance_id) : undefined
+        return <div key={workout.workout_instance_id}>
+          <h3>{fullWeekday.format(Date.parse(openDay.date))} · {dayStatus[workout.state].toLowerCase()}</h3>
+          {exercises?.length ? <table><tbody>{exercises.map(exercise => <tr key={exercise.ordinal}>
+            <td>{exercise.name}</td><td>{exercise.prescription}</td>
+            <td><AthleteBuilderLink athlete={scope.athlete}>Edit in sheet</AthleteBuilderLink></td>
+          </tr>)}</tbody></table> : details.status === 'ready'
+            ? <p className="ah-empty">{exercises ? 'No exercises scheduled.' : 'Exercises unavailable.'}</p>
+            : <SectionStatus status={details.status} label="exercises" retry={retry} />}
+        </div>
+      })}
+    </div>}
+  </>
+}
+
+function Schedule({ scope, cycle, today, result, retry }: {
+  scope: AthleteScope
+  cycle: AthleteHomeCycle | null
+  today: string
+  result: Read<AthleteScheduleWorkout[]>
+  retry(): void
+}) {
   const [selection, setSelection] = useState<{ cycleId: string; index: number } | null>(null)
-  const weeks = result.status === 'ready' ? calendarWeeks(result.data, cycle, today) : null
-  const index = weeks ? (selection && selection.cycleId === cycle?.assignment_id
+  const assignmentId = cycle?.assignment_id
+  const startOn = cycle?.start_on ?? null
+  const endOn = cycle?.end_on ?? null
+  const { api, gym, athlete } = scope
+  const readWeek = useMemo(() => createWeekExerciseReader(api, assignmentId), [api, gym, athlete, assignmentId])
+  const weeks = useMemo(() => result.status === 'ready' && assignmentId
+    ? calendarWeeks(result.data, { assignment_id: assignmentId, start_on: startOn, end_on: endOn }, today)
+    : null, [result, assignmentId, startOn, endOn, today])
+  const index = weeks ? (selection && selection.cycleId === assignmentId
     ? Math.min(selection.index, weeks.length - 1) : weeks.initialIndex) : 0
-  const week = weeks?.weekAt(index)
+  const week = useMemo(() => weeks?.weekAt(index), [weeks, index])
   return <section className="ah-card ah-week-card" aria-label="Athlete schedule">
     <header className="ah-card-head">
       <div className="ah-week-title">
         <h2>{!week || index === weeks?.currentIndex ? 'This week' : 'Schedule'}</h2>
         {week && weeks && <p className="ah-meta" aria-live="polite">
-          {shortDate.format(Date.parse(week.start))} – {week.start.slice(0, 7) === week.end.slice(0, 7) ? Number(week.end.slice(-2)) : shortDate.format(Date.parse(week.end))}
+          {shortDate(week.start)} – {week.start.slice(0, 7) === week.end.slice(0, 7) ? Number(week.end.slice(-2)) : shortDate(week.end)}
           {' · '}Week {index + 1} of {weeks.length}
         </p>}
       </div>
-      {weeks && cycle && <div className="ah-week-nav">
+      {weeks && assignmentId && <div className="ah-week-nav">
         <button type="button" className="ah-button" aria-label="Previous week" disabled={index === 0}
-          onClick={() => setSelection({ cycleId: cycle.assignment_id, index: index - 1 })}>‹</button>
+          onClick={() => setSelection({ cycleId: assignmentId, index: index - 1 })}>‹</button>
         <button type="button" className="ah-button" aria-label="Next week" disabled={index === weeks.length - 1}
-          onClick={() => setSelection({ cycleId: cycle.assignment_id, index: index + 1 })}>›</button>
+          onClick={() => setSelection({ cycleId: assignmentId, index: index + 1 })}>›</button>
       </div>}
     </header>
-    {result.status !== 'ready' ? <SectionStatus status={result.status} label="schedule" retry={retry} /> : week ? <ol className="ah-week">
-      {week.days.map(day => <li key={day.date} className={day.workouts.length ? 'ah-day' : 'ah-day ah-day-rest'}
-        aria-current={day.today ? 'date' : undefined}>
-        <time className="ah-meta" dateTime={day.date}>{weekday.format(Date.parse(day.date))} {Number(day.date.slice(-2))}</time>
-        {day.workouts.length ? day.workouts.map(workout => <div key={workout.workout_instance_id} className="ah-day-workout">
-          <strong title={workout.title}>{workout.shortTitle}</strong>
-          <span className="ah-outcome" data-state={workout.state} title={workoutStatus[workout.state].label}>
-            <span aria-hidden="true">{workoutStatus[workout.state].mark}</span>
-            <span className="ah-sr">{workoutStatus[workout.state].label}</span>
-          </span>
-        </div>) : <span className="ah-rest">Rest</span>}
-      </li>)}
-    </ol> : <p className="ah-empty">No workouts scheduled.</p>}
+    {result.status !== 'ready' ? <SectionStatus status={result.status} label="schedule" retry={retry} /> : week && assignmentId
+      ? <WeekDays key={`${assignmentId}:${week.start}`} scope={scope} readWeek={readWeek} week={week} />
+      : <p className="ah-empty">No workouts scheduled.</p>}
   </section>
 }
 
@@ -106,9 +156,9 @@ function WorkoutRows({ items, onActivity }: ActivityProps & { items: CoachRecent
   return <ul className="ah-list">
     {items.map(item => <li key={item.activity_id}>
       <button type="button" className="ah-workout-row" onClick={() => onActivity(item)}>
-        <time className="ah-meta" dateTime={item.performed_at}>{shortDate.format(Date.parse(item.performed_at))}</time>
+        <time className="ah-meta" dateTime={item.performed_at}>{activityDate.format(Date.parse(item.performed_at))}</time>
         <strong title={item.day_label}>{item.day_label}</strong>
-        <span className="ah-outcome" data-state={item.outcome}>{workoutStatus[item.outcome].label}</span>
+        <span className="ah-outcome" data-state={item.outcome}>{dayStatus[item.outcome]}</span>
         <span aria-hidden="true">›</span>
       </button>
     </li>)}
@@ -210,23 +260,61 @@ function Strength({ scope, overviewVisible }: { scope: AthleteScope; overviewVis
   </section>
 }
 
-export function AthleteHome({ api, gym, athlete, cycle, today, onActivity, onDirtyChange, hidden = false }: AthleteScope & ActivityProps & {
+export function AthleteHome({ api, gym, athlete, cycle, programName, today, queuedState, gateEpoch, renderHeader, onActivity, onDirtyChange, hidden = false }: AthleteScope & ActivityProps & {
   cycle: AthleteHomeCycle | null
+  programName?: string | null
   today: string
+  queuedState?: CoachExcelNextCycleApi['queuedState']
+  gateEpoch?: number
+  renderHeader?(programLine?: ReactNode, nextProgramLine?: ReactNode): ReactNode
   onDirtyChange(dirty: boolean): void
   hidden?: boolean
 }) {
   const scope = { api, gym, athlete }
-  return <div className="ah-root" hidden={hidden}>
-    <div className="ah-layout">
-      <div className="ah-main">
-        <Schedule scope={scope} cycle={cycle} today={today} />
-        <Recent scope={scope} onActivity={onActivity} />
-        <Strength scope={scope} overviewVisible={!hidden} />
+  const [calendar, retryCalendar] = useAthleteRead(scope, readCalendar)
+  const [queue, setQueue] = useState<{ gym: string; athlete: string; cycle: Extract<CoachCycleQueuedState, { queued: true }> } | null>(null)
+  const queuedCycle = queue?.gym === gym && queue.athlete === athlete ? queue.cycle : null
+  useEffect(() => {
+    if (hidden) return
+    setQueue(null)
+    if (!queuedState || gateEpoch == null) return
+    let active = true
+    // Wait until the effect survives React's development cleanup before starting the read.
+    void Promise.resolve().then(async () => {
+      if (!active) return
+      const result = await queuedState({ gym, athlete, expected_gate_epoch: gateEpoch })
+      if (active && result.queued) setQueue({ gym, athlete, cycle: result })
+    }).catch(() => {
+      // The queued cycle is optional context on the athlete page.
+    })
+    return () => { active = false }
+  }, [gym, athlete, queuedState, gateEpoch, hidden])
+  const assignmentId = cycle?.assignment_id
+  const workouts = useMemo(() => calendar.status === 'ready' && assignmentId
+    ? currentCycleWorkouts(calendar.data, assignmentId) : null, [calendar, assignmentId])
+  const name = workouts?.[0]?.program_name ?? programName ?? 'Current program'
+  const remaining = workouts?.filter(workout => workout.state === 'not_started' || workout.state === 'in_progress').length
+  return <>
+    {renderHeader?.(assignmentId ? <>
+      Now: <strong>{name}</strong>
+      {remaining !== undefined && ` · ${remaining} workout${remaining === 1 ? '' : 's'} left`}
+      {' · '}<AthleteBuilderLink athlete={athlete}>Open in Build Workouts →</AthleteBuilderLink>
+    </> : undefined, queuedCycle ? <>
+      Next: <strong>{queuedCycle.program_name}</strong>
+      {queuedCycle.start_on !== null && ` · starts ${shortDate(queuedCycle.start_on)}`}
+      {' · on the phone'}
+    </> : undefined)}
+    <div className="ah-root" hidden={hidden}>
+      <div className="ah-layout">
+        <div className="ah-main">
+          <Schedule scope={scope} cycle={cycle} today={today} result={calendar} retry={retryCalendar} />
+          <Recent scope={scope} onActivity={onActivity} />
+          <Strength scope={scope} overviewVisible={!hidden} />
+        </div>
+        <aside className="ah-notes">
+          <CoachNotes {...scope} onDirtyChange={onDirtyChange} />
+        </aside>
       </div>
-      <aside className="ah-notes">
-        <CoachNotes {...scope} onDirtyChange={onDirtyChange} />
-      </aside>
     </div>
-  </div>
+  </>
 }

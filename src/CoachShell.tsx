@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ManualTabList } from './ManualTabList'
 import { MaxReportInbox } from './MaxReportInbox'
 import type { BacklogRevisionApi, CoachDashboardRosterPageV1, CoachMaxReportV1 } from './lib/coach-api'
@@ -6,6 +6,22 @@ import './coach-shell.css'
 
 type Tab = 'athletes' | 'builder'
 export type CoachShellRoute = { tab: Tab; athlete: string | null }
+
+const AthleteBuilderContext = createContext<((route: CoachShellRoute) => void) | null>(null)
+
+export function AthleteBuilderLink({ athlete, children }: { athlete: string; children: ReactNode }) {
+  const onNavigate = useContext(AthleteBuilderContext)
+  if (!onNavigate) return null
+  const route = { tab: 'builder' as const, athlete }
+  const url = new URL(window.location.href)
+  url.searchParams.set('tab', route.tab)
+  url.searchParams.set('athlete', athlete)
+  return <a className="ah-builder-link" href={url.search} onClick={event => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    onNavigate(route)
+  }}>{children}</a>
+}
 
 function readRoute(): CoachShellRoute {
   const params = new URLSearchParams(window.location.search)
@@ -23,49 +39,110 @@ function writeRoute(route: CoachShellRoute, position: number, replace: boolean) 
   window.history[replace ? 'replaceState' : 'pushState']({ ...window.history.state, coachShellPosition: position }, '', url)
 }
 
-export function useCoachShellRoute(enabled: boolean, canLeave: () => boolean) {
+type HistoryEntry = { route: CoachShellRoute; position: number }
+type LeaveDecision = boolean | (() => Promise<boolean>)
+
+export function useCoachShellRoute(enabled: boolean, leaveScreen: () => LeaveDecision) {
   const [route, setRoute] = useState<CoachShellRoute>(() => enabled ? readRoute() : { tab: 'athletes', athlete: null })
   const current = useRef({ route, position: 0 })
-  const guard = useRef(canLeave)
-  useLayoutEffect(() => { guard.current = canLeave }, [canLeave])
+  const guard = useRef(leaveScreen)
+  const pending = useRef(false)
+  const traversal = useRef<(HistoryEntry & { done: Promise<boolean>; finish(reached: boolean): void }) | null>(null)
+  useLayoutEffect(() => { guard.current = leaveScreen }, [leaveScreen])
+
+  const applyRoute = useCallback((route: CoachShellRoute, position: number, replace: boolean) => {
+    writeRoute(route, position, replace)
+    current.current = { route, position }
+    setRoute(route)
+  }, [])
+
+  const withLeaveGuard = useCallback((proceed: () => void | Promise<void>, restore?: () => void) => {
+    const decision = pending.current || traversal.current ? false : guard.current()
+    if (decision === true) {
+      void proceed()
+      return
+    }
+    if (decision === false) {
+      restore?.()
+      return
+    }
+    pending.current = true
+    restore?.()
+    // Restore the current entry before opening a dialog for a browser traversal.
+    const restoring = traversal.current
+    const answer = restoring ? restoring.done.then(reached => reached && decision()) : decision()
+    void answer.then(async allowed => {
+      if (!allowed) return
+      // Back or Forward may also have been pressed during a tab or athlete switch.
+      if (await traversal.current?.done === false) return
+      return proceed()
+    }, () => {}).finally(() => { pending.current = false })
+  }, [])
 
   useEffect(() => {
     if (!enabled) return
+    let active = true
     current.current.position = historyPosition()
     writeRoute(current.current.route, current.current.position, true)
+
+    function moveHistory(entry: HistoryEntry, offset: number) {
+      let finish!: (reached: boolean) => void
+      const done = new Promise<boolean>(resolve => { finish = resolve })
+      traversal.current = { ...entry, done, finish }
+      window.history.go(offset)
+      return done
+    }
+
     const onPop = () => {
       const next = readRoute()
       const position = historyPosition()
-      const previous = current.current
-      if (sameRoute(next, previous.route)) {
-        previous.position = position
-        return
-      }
-      if (!guard.current()) {
-        // Return to the prior history entry when a coach cancels Back or Forward.
-        if (window.history.state?.coachShellPosition != null && previous.position !== position) {
-          window.history.go(previous.position - position)
-        } else {
-          writeRoute(previous.route, previous.position, true)
+      const move = traversal.current
+      if (move) {
+        if (move.position === position && sameRoute(move.route, next)) {
+          traversal.current = null
+          move.finish(true)
         }
         return
       }
-      writeRoute(next, position, true)
-      current.current = { route: next, position }
-      setRoute(next)
+      const previous = current.current
+      if (!pending.current && sameRoute(next, previous.route)) {
+        previous.position = position
+        return
+      }
+      const offset = window.history.state?.coachShellPosition != null ? position - previous.position : 0
+      let restored = false
+      withLeaveGuard(() => {
+        if (!active) return
+        if (!restored || !offset) {
+          applyRoute(next, restored ? previous.position : position, true)
+          return
+        }
+        // Replay the original traversal after restoration so Forward entries survive.
+        return (async () => {
+          await moveHistory({ route: next, position }, offset)
+          if (active) applyRoute(next, position, true)
+        })()
+      }, () => {
+        restored = true
+        if (offset) void moveHistory(previous, -offset)
+        else writeRoute(previous.route, previous.position, true)
+      })
     }
     window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [enabled])
+    return () => {
+      active = false
+      window.removeEventListener('popstate', onPop)
+      traversal.current?.finish(false)
+      traversal.current = null
+    }
+  }, [enabled, applyRoute, withLeaveGuard])
 
   function goTo(next: CoachShellRoute, replace = false) {
     if (sameRoute(current.current.route, next)) return
     const position = current.current.position + (replace ? 0 : 1)
-    writeRoute(next, position, replace)
-    current.current = { route: next, position }
-    setRoute(next)
+    applyRoute(next, position, replace)
   }
-  return [route, goTo] as const
+  return [route, goTo, withLeaveGuard] as const
 }
 
 const filters = [
@@ -150,14 +227,20 @@ export function CoachShell({ route, athletes, selected, loading, workspacePicker
         {onRemoved && <button className="csh-removed" onClick={onRemoved}>Removed clients →</button>}
       </aside>
       <div className="csh-main" role={route.tab === 'athletes' || !selected ? 'main' : undefined}>
-        <div id={panelId} role="tabpanel">{children}</div>
+        <div id={panelId} role="tabpanel">
+          <AthleteBuilderContext.Provider value={onNavigate}>
+            {children}
+          </AthleteBuilderContext.Provider>
+        </div>
       </div>
     </div>
   </div>
 }
 
-export function CoachShellAthleteHeader({ athlete, profileOpen, onProfile, onConnect, onRemove, onErase }: {
+export function CoachShellAthleteHeader({ athlete, programLine, nextProgramLine, profileOpen, onProfile, onConnect, onRemove, onErase }: {
   athlete: ShellAthlete
+  programLine?: ReactNode
+  nextProgramLine?: ReactNode
   profileOpen: boolean
   onProfile(): void
   onConnect?(): void
@@ -198,7 +281,8 @@ export function CoachShellAthleteHeader({ athlete, profileOpen, onProfile, onCon
     <div>
       <p className="eyebrow">ATHLETE</p>
       <h1>{athlete.item.roster_name}</h1>
-      <p>{athlete.program ?? 'No current program'} <StatusBadge status={athlete.status} /></p>
+      <p>{programLine ?? athlete.program ?? 'No current program'} <StatusBadge status={athlete.status} /></p>
+      {nextProgramLine && <p>{nextProgramLine}</p>}
     </div>
     <nav aria-label="Athlete actions">
       <button ref={profileButton} className="button outline" aria-expanded={profileOpen} onClick={onProfile}>Profile</button>

@@ -521,7 +521,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const [reviewSchedule, setReviewSchedule] = useState<CoachCycleDestinationScheduleV2 | null>(null)
   const [destinationIssues, setDestinationIssues] = useState<CoachCycleDestinationIssue[]>([])
   const [message, setMessage] = useState(previous.current ? (localPersistence ? 'Saved draft reopened from this browser.' : 'Saved draft reopened from Coach storage.') : '')
-  const [zoom, setZoom] = useState(0.6)
+  const [zoom, setZoom] = useState(twoScreen ? 1 : 0.6)
   const workbook = useRef<WorkbookInstance>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   // Block actions and zoom remount the engine. Restore the scroll position or reveal an inserted exercise.
@@ -1130,8 +1130,12 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
           {check.emptySlots > 0 && <li className="cse-flag-more">{check.emptySlots === 1 ? '1 exercise slot is empty' : `${check.emptySlots} exercise slots are empty`}: fill it in or remove it from the exercise card.</li>}
           {check.other.map(message => <li key={message} className="cse-flag-more">{message}</li>)}</ul>
       </div>}
+      {twoScreen && !readOnly && message && ![
+        'Saved draft reopened from Coach storage.', 'Saved draft reopened from this browser.',
+        'Draft saved to Coach storage.', 'Draft saved in this browser. Reload to check it reopens.',
+      ].includes(message) && <p className="ccd-toolbar-notice" ref={statusRef} role="status">{message}</p>}
       <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}><div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} {...(readOnly ? { allowEdit: false } : {})} showFormulaBar={false} addRows={0} cellContextMenu={readOnly ? ['copy'] : ['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>{exercisePanel()}</div>
-      {!readOnly && <div className="cse-status" ref={statusRef}><span>{unsaved ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>}
+      {!twoScreen && !readOnly && <div className="cse-status" ref={statusRef}><span>{unsaved ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>}
     </section>}
     {review && localPersistence && reviewSchedule && <section className="cycle-review" aria-label="Cycle calendar review">
       <h2>Cycle dates</h2><p>Week 1 starts {reviewSchedule.startOn}. The complete cycle ends {reviewSchedule.endOn}.</p>

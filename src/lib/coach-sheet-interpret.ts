@@ -82,6 +82,12 @@ const amrapPattern = /^(?:amrap|max\s+reps|to\s+failure|failure|fail|(\d+)\+(?:\
 /** Set note for an `N+` AMRAP set; shared with the server publish parser. */
 export const amrapMinimumNote = (min: number): string => `At least ${min} reps`
 
+export function amrapMinimumFromNote(note: unknown): number | null {
+  if (typeof note !== 'string') return null
+  const minimum = Number(/^At least ([0-9]{1,4}) reps$/.exec(note)?.[1])
+  return minimum >= 1 && minimum <= 1000 && note === amrapMinimumNote(minimum) ? minimum : null
+}
+
 function finite(value: string, allowZero = false): number | null {
   const number = Number(value)
   // Comparing decimal spellings catches significant-digit loss such as 9007199254740991.1.

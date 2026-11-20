@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CoachCycleDraftRecord, createCoachCycleDraftApi } from './lib/coach-cycle-draft-api'
 import type { CoachErasedAthleteDraftSummaryV1, October18CoachApi } from './lib/coach-api'
+import { useErasedAthleteDrafts } from './lib/use-erased-athlete-drafts'
 
 // Library (Joe, Nov 16 review 3): every saved cycle across the coach's clients, ready to copy to
 // the athlete being built. Copying makes a new unsaved draft and leaves the original intact.
 type DraftApi = Pick<ReturnType<typeof createCoachCycleDraftApi>, 'list' | 'read'>
-export type ErasedAthleteDraftApi = Partial<Pick<October18CoachApi, 'getCoachErasedAthleteDraftsV1' | 'readCoachErasedAthleteDraftV1'>>
+export type ErasedAthleteDraftApi = Partial<Pick<October18CoachApi, 'getCoachErasedAthleteDraftsV2' | 'readCoachErasedAthleteDraftV1'>>
 type Entry = {
   id: string; clientName: string; updatedAt: string; record: CoachCycleDraftRecord | null
   intake: Pick<CoachErasedAthleteDraftSummaryV1, 'name' | 'weeks' | 'days' | 'unit'>
@@ -17,7 +18,8 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
   api: DraftApi; erasedApi?: ErasedAthleteDraftApi; gym: string; clients: { id: string; name: string }[]; targetName: string
   onUse(record: CoachCycleDraftRecord, clientName: string): void; onClose(): void
 }) {
-  const [entries, setEntries] = useState<Entry[] | null>(null)
+  const [saved, setSaved] = useState<Entry[] | null>(null)
+  const erasedDrafts = useErasedAthleteDrafts(gym, erasedApi?.readCoachErasedAthleteDraftV1 ? erasedApi.getCoachErasedAthleteDraftsV2 : undefined)
   const [failed, setFailed] = useState(false)
   const [reading, setReading] = useState(false)
   const [readFailed, setReadFailed] = useState(false)
@@ -28,18 +30,13 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
   const clientKey = JSON.stringify(clients.map(client => [client.id, client.name]))
   useEffect(() => {
     let active = true
-    setEntries(null)
+    setSaved(null)
     setFailed(false)
     setReading(false)
     setReadFailed(false)
     void (async () => {
       const drafts: { id: string; athleteId: string; clientName: string; updatedAt: string }[] = []
       let error = false
-      const erased = (async () => {
-        if (!erasedApi?.getCoachErasedAthleteDraftsV1 || !erasedApi.readCoachErasedAthleteDraftV1) return []
-        try { return (await erasedApi.getCoachErasedAthleteDraftsV1({ gym, page_limit: 100 })).items }
-        catch { error = true; return [] }
-      })()
       for (const client of clients.slice(0, MAX_CLIENTS)) {
         try {
           const list = await api.list({ gym, athlete: client.id, page_limit: 100 })
@@ -48,24 +45,28 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
         if (!active) return
       }
       drafts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      const existing = Promise.all(drafts.slice(0, MAX_READS).map(async ({ id, athleteId, clientName, updatedAt }): Promise<Entry | null> => {
+      const existing = await Promise.all(drafts.slice(0, MAX_READS).map(async ({ id, athleteId, clientName, updatedAt }): Promise<Entry | null> => {
         try {
           const record = await api.read({ gym, athlete: athleteId, draft: id })
           return { id, clientName, updatedAt, record, intake: record.source.intake }
         } catch { error = true; return null }
       }))
-      const [saved, deleted] = await Promise.all([existing, erased])
       if (!active) return
-      const erasedIds = new Set(deleted.map(item => item.draft_id))
-      const found: Entry[] = [
-        ...saved.filter((entry): entry is Entry => entry !== null && !erasedIds.has(entry.id)),
-        ...deleted.map(intake => ({ id: intake.draft_id, clientName: DELETED_ATHLETE, updatedAt: intake.updated_at, record: null, intake })),
-      ]
-      setEntries(found.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+      setSaved(existing.filter((entry): entry is Entry => entry !== null))
       setFailed(error)
     })()
     return () => { active = false; readAttempt.current = null }
   }, [api, erasedApi, gym, clientKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const entries = useMemo(() => {
+    if (!saved || (erasedDrafts.loading && !erasedDrafts.page)) return null
+    const deleted = erasedDrafts.page?.items ?? []
+    const erasedIds = new Set(deleted.map(item => item.draft_id))
+    const found: Entry[] = [
+      ...saved.filter(entry => !erasedIds.has(entry.id)),
+      ...deleted.map(intake => ({ id: intake.draft_id, clientName: DELETED_ATHLETE, updatedAt: intake.updated_at, record: null, intake })),
+    ]
+    return found.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }, [saved, erasedDrafts.loading, erasedDrafts.page])
   const shown = useMemo(() => {
     const needle = search.trim().toLowerCase()
     return (entries ?? []).filter(entry => !needle || `${entry.intake.name} ${entry.clientName}`.toLowerCase().includes(needle))
@@ -117,7 +118,9 @@ export function CoachCycleLibrary({ api, erasedApi, gym, clients, targetName, on
           <button className="button primary" disabled={reading} onClick={() => void useEntry(entry)}>Use for {targetName}</button>
         </li>
       })}</ul>}
-    {failed && <p className="ccd-note">Some clients' cycles could not be loaded.</p>}
+    {entries && erasedDrafts.page?.next_cursor && <button className="button outline" disabled={erasedDrafts.loading} onClick={erasedDrafts.showMore}>Show more</button>}
+    {(failed || (erasedDrafts.failed && !erasedDrafts.page)) && <p className="ccd-note">Some clients' cycles could not be loaded.</p>}
+    {erasedDrafts.failed && erasedDrafts.page && <p className="ccd-note" role="alert">More cycles could not be loaded. Try again.</p>}
     {reading && <p className="ccd-note" role="status">Loading saved cycle…</p>}
     {readFailed && <p className="ccd-note" role="alert">That cycle could not be loaded. Try again.</p>}
   </div>

@@ -1,7 +1,7 @@
 import { authorizationV2Keys, isCoachCycleAuthorizationV2, sameCoachCycleAuthorizationV2, type CoachCycleAuthorizationV2 } from './coach-cycle-authorization-v2'
 // Frozen local v2 review contract. No commit, source body, compiled input or UI authority.
 import { readCoachCycleDraftJson } from './coach-cycle-draft-api'
-import type { CoachCycleSqlGroup } from './coach-cycle-publish-api'
+import { isCoachCycleSqlGroup, type CoachCycleSqlGroup } from './coach-cycle-publish-api'
 export const COACH_CYCLE_PREVIEW_V2_PATHS = { preview: '/api/coach-cycle-preview-v2', detail: '/api/coach-cycle-preview-detail-v2' } as const
 export type CoachCyclePreviewV2Operation = keyof typeof COACH_CYCLE_PREVIEW_V2_PATHS
 export const COACH_CYCLE_PREVIEW_V2_REQUEST_MAX_BYTES = 2048
@@ -38,30 +38,11 @@ const exact = (v: unknown, keys: string[]): v is Record<string, unknown> => obje
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v) && v !== '00000000-0000-0000-0000-000000000000'
 const hash = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)
 const integer = (v: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER): v is number => Number.isSafeInteger(v) && Number(v) >= minimum && Number(v) <= maximum
-const number = (v: unknown, minimum: number, maximum: number, scale = 3): v is number => typeof v === 'number' && Number.isFinite(v) && v >= minimum && v <= maximum && Math.abs(v * 10 ** scale - Math.round(v * 10 ** scale)) < 0.00001
 const text = (v: unknown, maximum: number, required = false): v is string => typeof v === 'string' && [...v].length <= maximum && (!required || v.trim().length > 0) && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(v) && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(v)
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const date = (v: unknown): v is string => typeof v === 'string' && /^(?!0000)\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v
 const after = (day: string, count: number) => new Date(Date.parse(`${day}T00:00:00Z`) + count * 86400000).toISOString().slice(0, 10)
 const address = (row: number, column: number) => `${column < 26 ? String.fromCharCode(65 + column) : `A${String.fromCharCode(65 + column - 26)}`}${row + 1}`
-const groupKeys = ['mode','identity_token','ordinal','sets_mode','sets_min','sets_max','dose_mode','reps_mode','dose_min','dose_max','distance_unit','laterality','load_mode','load_basis','exact_weight','percent','percent_basis_exercise_id','percent_basis_max_type','manual_override','rpe_min','rpe_max','qualitative','unit_override','rest_seconds','note']
-function group(v: unknown, ordinal: number): boolean {
-  if (!exact(v, groupKeys) || v.mode !== 'replace' || v.identity_token !== null || v.ordinal !== ordinal || v.sets_mode !== 'exact' || !integer(v.sets_min, 1, 20) || v.sets_max !== null || !['bilateral', 'each_side'].includes(String(v.laterality)) || v.load_basis !== 'total' || ['percent', 'percent_basis_exercise_id', 'percent_basis_max_type', 'manual_override', 'rest_seconds', 'note'].some(key => v[key] !== null)) return false
-  if (v.dose_mode === 'reps') {
-    if (!integer(v.dose_min, 1, 1000) || v.distance_unit !== null || (v.reps_mode === 'exact' ? v.dose_max !== null : v.reps_mode !== 'range' || !integer(v.dose_max, Number(v.dose_min) + 1, 1000))) return false
-  } else if (v.dose_mode === 'time') { if (!integer(v.dose_min, 1, 9999999) || v.dose_max !== null || v.reps_mode !== null || v.distance_unit !== null) return false }
-  else if (v.dose_mode === 'distance') { if (!number(v.dose_min, 0.001, 9999999.999) || v.dose_max !== null || v.reps_mode !== null || !['m', 'km', 'ft', 'mi'].includes(String(v.distance_unit))) return false }
-  else return false
-  if (v.rpe_min === null ? v.rpe_max !== null : !number(v.rpe_min, 1, 10, 1) || v.rpe_max !== null && (!number(v.rpe_max, Number(v.rpe_min), 10, 1) || v.rpe_max === v.rpe_min)) return false
-  if (v.unit_override !== null && v.unit_override !== 'lb' && v.unit_override !== 'kg') return false
-  if (v.load_mode === 'exact') return number(v.exact_weight, 0.001, 9999999.999) && v.qualitative === null
-  if (v.unit_override !== null) return false
-  if (v.load_mode === 'bodyweight') return v.exact_weight === 0 && v.qualitative === null
-  if (v.exact_weight !== null) return false
-  if (v.load_mode === 'qualitative') return ['L', 'M', 'MH', 'H'].includes(String(v.qualitative))
-  return v.qualitative === null && (v.load_mode === 'none' || v.load_mode === 'athlete_choice' && v.rpe_min === null || v.load_mode === 'rpe' && v.rpe_min !== null)
-}
-
 const timestamp = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v))
 export function isCoachCyclePreviewV2Input(operation: CoachCyclePreviewV2Operation, v: unknown): v is CoachCyclePreviewV2Input | CoachCyclePreviewDetailV2Input {
   if (operation !== 'preview' && operation !== 'detail') return false
@@ -101,7 +82,7 @@ function item(v: unknown, total: number, summary?: CoachCyclePreviewV2Summary): 
   if (!exact(v, ['item_index','week','weekday','day','scheduled_date','block_id','status','name','prescription','instruction','set_groups','source','group_source'])
     || !integer(v.item_index, 0, total-1) || !integer(v.week, 1, summary?.week_count ?? 12) || !integer(v.weekday, 1, 7) || v.day !== weekdays[v.weekday-1] || !date(v.scheduled_date)
     || new Date(`${v.scheduled_date}T00:00:00Z`).getUTCDay() !== v.weekday % 7 || !uuid(v.block_id) || !['programmed','skipped'].includes(String(v.status)) || !text(v.name, 120, true) || !text(v.prescription, 1000, true) || !text(v.instruction, 500)
-    || !Array.isArray(v.set_groups) || v.set_groups.length > 20 || !v.set_groups.every((g, i) => group(g, i+1))
+    || !Array.isArray(v.set_groups) || v.set_groups.length > 20 || !v.set_groups.every((g, i) => isCoachCycleSqlGroup(g, i+1))
     || !exact(v.source, ['name','prescription','instruction']) || ![v.source.name,v.source.prescription,v.source.instruction].every(source)
     || !Array.isArray(v.group_source) || v.group_source.length !== v.set_groups.length) return false
   // A week that switches exercise names its own row (its run's first week), so

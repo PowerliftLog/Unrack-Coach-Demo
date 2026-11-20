@@ -11,6 +11,7 @@ import {
   type CoachExcelNextCycleStatusInput, type CoachExcelNextCycleStatus,
   type CoachExcelNextCycleCancelInput, type CoachExcelNextCycleCancelResult,
   type CoachCycleRunningStateInput, type CoachCycleRunningState, type CoachCycleRunningUpdateInput, type CoachCycleRunningUpdateResult,
+  type CoachCycleQueuedStateInput, type CoachCycleQueuedState,
 } from './coach-excel-next-cycle-api'
 
 export class CoachExcelNextCycleError extends Error {
@@ -62,8 +63,28 @@ export function createCoachExcelNextCycleApi(options: { baseUrl?: string; getAcc
           if (value.error === 'serialization_retry') throw new CoachExcelNextCycleError('retryable', value.error)
           if (COACH_EXCEL_NEXT_CYCLE_CONFLICTS.some(reason => reason === value.error)) throw new CoachExcelNextCycleError('conflict', String(value.error))
         }
+        const reviewingOrSending = operation === 'preview' || operation === 'publish'
         if (response.status === 422 && exact(value, ['error', 'reason']) && COACH_EXCEL_NEXT_CYCLE_BLOCKS.some(reason => reason === value.reason)) throw new CoachExcelNextCycleError('blocked', String(value.reason))
-        throw new CoachExcelNextCycleError(response.status === 403 ? 'access_denied' : response.status === 404 || response.status === 503 ? 'unavailable' : response.status >= 500 ? sent && (operation === 'publish' || operation === 'running_update') ? 'ambiguous' : 'network' : 'invalid')
+        if (response.status === 403) throw new CoachExcelNextCycleError('access_denied')
+        if (reviewingOrSending) {
+          if (exact(value, ['error'])) {
+            if (response.status === 404 && value.error === 'not_found'
+              || response.status === 503 && ['builder_paused_for_athlete', 'service_not_configured'].some(error => error === value.error)) {
+              throw new CoachExcelNextCycleError('unavailable')
+            }
+            if (response.status === 400 && value.error === 'invalid_request_body'
+              || response.status === 413 && value.error === 'request_body_too_large'
+              || response.status === 415 && value.error === 'content_type_must_be_json'
+              || response.status === 429 && value.error === 'rate_limit_exceeded') {
+              throw new CoachExcelNextCycleError('invalid')
+            }
+          }
+          // Unrecognized responses cannot prove a publish was rejected before it took effect.
+          throw uncertain()
+        }
+        if (response.status === 404 || response.status === 503) throw new CoachExcelNextCycleError('unavailable')
+        if (response.status >= 500) throw uncertain()
+        throw new CoachExcelNextCycleError('invalid')
       }
       if (!isCoachExcelNextCycleResult(operation, value, snapshot)) throw uncertain()
       if (operation === 'preview' && (value as CoachExcelNextCyclePreviewPage).summary.owner_subject !== owner) throw new CoachExcelNextCycleError('access_denied')
@@ -82,8 +103,10 @@ export function createCoachExcelNextCycleApi(options: { baseUrl?: string; getAcc
     cancel: async (input: CoachExcelNextCycleCancelInput) => await post('cancel', input) as CoachExcelNextCycleCancelResult,
     runningState: async (input: CoachCycleRunningStateInput) => await post('running_state', input) as CoachCycleRunningState,
     runningUpdate: async (input: CoachCycleRunningUpdateInput) => await post('running_update', input) as CoachCycleRunningUpdateResult,
+    queuedState: async (input: CoachCycleQueuedStateInput) => await post('queued_state', input) as CoachCycleQueuedState,
   }
 }
 type FullApi = ReturnType<typeof createCoachExcelNextCycleApi>
-/** Running-program operations are optional so older callers and test doubles stay valid. */
-export type CoachExcelNextCycleApi = Omit<FullApi, 'runningState' | 'runningUpdate'> & Partial<Pick<FullApi, 'runningState' | 'runningUpdate'>>
+type CycleOperations = 'runningState' | 'runningUpdate' | 'queuedState'
+/** Cycle operations are optional so older callers and test doubles stay valid. */
+export type CoachExcelNextCycleApi = Omit<FullApi, CycleOperations> & Partial<Pick<FullApi, CycleOperations>>

@@ -1,12 +1,16 @@
 import type { RefObject } from 'react'
 import type { CoachSheetActions, CoachSheetToolbarState } from './review/CoachSheetEditorProof'
 import { percentConversionLabel } from './lib/coach-percent-resolution'
+import type { BuilderStatus } from './lib/cycle-send-state'
 import './coach-builder.css'
 
-export function CoachBuilderToolbar({ sheet, state, published, busy, saveBlocked, onLibrary, onStatus, drawerOpen, onCopy }: {
+export type { BuilderStatus } from './lib/cycle-send-state'
+
+export function CoachBuilderToolbar({ sheet, state, status, sendChanges, busy, saveBlocked, onLibrary, onStatus, drawerOpen, onCopy }: {
   sheet: RefObject<CoachSheetActions | null>
   state: CoachSheetToolbarState | null
-  published: boolean
+  status?: BuilderStatus
+  sendChanges?: boolean
   busy: boolean
   saveBlocked: boolean
   onLibrary?: () => void
@@ -14,8 +18,6 @@ export function CoachBuilderToolbar({ sheet, state, published, busy, saveBlocked
   drawerOpen: boolean
   onCopy?: () => void
 }) {
-  const status = state && state.problemCount > state.readyCount ? 'review' : published && state && !state.dirty ? 'published' : 'draft'
-  const statusText = { published: 'Published', draft: 'Draft', review: 'Needs review' }[status]
   const working = busy || state?.saving || state?.publishing
   const copyMode = Boolean(onCopy)
   return <div className="ccb-toolbar" role="group" aria-label="Builder actions">
@@ -38,11 +40,13 @@ export function CoachBuilderToolbar({ sheet, state, published, busy, saveBlocked
     </div>
     <div className="ccb-tool-group ccb-tool-end">
       {onCopy ? <button type="button" className="ccb-primary" disabled={working} onClick={onCopy}>Use as start for next cycle</button> : <>
-        <button type="button" className={`ccb-status ccb-status-${status}`} title="Publish status" aria-expanded={drawerOpen} onClick={onStatus}>{statusText}</button>
-        <button type="button" disabled={!state || working || saveBlocked} onClick={() => void sheet.current?.save()}>{state?.saving ? 'Saving…' : 'Save draft'}</button>
+        {status && <button type="button" className={`ccb-status ccb-status-${status.kind}`} title="Send details" aria-live="polite" aria-expanded={drawerOpen} onClick={onStatus}>
+          <b>{status.title}</b>{status.detail && <small>{status.detail}</small>}
+        </button>}
+        <button type="button" disabled={!state || working || saveBlocked} onClick={() => void sheet.current?.save()}>{state?.saving ? 'Saving…' : 'Save'}</button>
         <button type="button" className="ccb-primary" disabled={!state?.canPublish || working || saveBlocked}
-          title={state?.publishBlocked ? 'Fix the highlighted cells to publish' : undefined}
-          onClick={() => void sheet.current?.publish()}>{state?.publishing ? 'Publishing…' : 'Publish'}</button>
+          title={state?.publishBlocked ? 'Fix the highlighted cells to send' : undefined}
+          onClick={() => void sheet.current?.publish()}>{state?.publishing ? 'Sending…' : sendChanges ? 'Send changes' : 'Send to phone'}</button>
       </>}
     </div>
   </div>

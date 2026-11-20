@@ -40,6 +40,11 @@ export function CoachAthleteErasure({ erase, gym, athlete, name, onClose, onEras
           attempt.current = null
           setRetry(false)
           setError(new CoachApiError('erase_confirm_required').message)
+        } else if (cause instanceof CoachApiError && cause.code === 'erase_timed_out') {
+          attempt.current = null
+          setConfirmation('')
+          setRetry(false)
+          setError(cause.message)
         } else if (cause instanceof CoachApiError && cause.status === 409 && cause.code === 'erase_refused') {
           setRetry(false)
           setError(cause.message)

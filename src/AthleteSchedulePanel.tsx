@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { localToday } from './lib/local-date'
 import './athlete-schedule-panel.css'
 
 export type AthleteScheduleWorkout = {
@@ -43,10 +44,6 @@ const weekStart = (value: string) => {
   const day = dateValue(value)!.getUTCDay()
   return shiftDate(value, -((day + 6) % 7))
 }
-const today = () => {
-  const date = new Date()
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
 const shortDate = (value: string) => new Intl.DateTimeFormat(undefined, {
   month: 'short', day: 'numeric', timeZone: 'UTC',
 }).format(dateValue(value)!)
@@ -55,6 +52,7 @@ const stateLabel: Record<AthleteScheduleWorkout['state'], string> = {
 }
 
 function ScheduleScope({ gym, athlete, assignment, full = false, getSchedule }: AthleteSchedulePanelProps) {
+  const today = localToday()
   const headingId = useId()
   const dateId = useId()
   const [expanded, setExpanded] = useState(full)
@@ -136,7 +134,7 @@ function ScheduleScope({ gym, athlete, assignment, full = false, getSchedule }: 
     </header>
     {!expanded && !error && <div className="athlete-schedule-mini-grid" aria-label="Athlete schedule week summary">{days.map(date => {
       const rows = workouts.filter(row => row.scheduled_date === date)
-      return <div key={date} data-today={date === today()}><span>{new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(dateValue(date)!)}</span><time dateTime={date}>{dateValue(date)!.getUTCDate()}</time><span className="athlete-schedule-mini-workout" title={rows.map(row => `${row.title} · ${stateLabel[row.state]}`).join(' / ')}>{loading && updatedAt === null ? '…' : rows.length ? rows.map(row => row.title).join(' / ') : '—'}</span></div>
+      return <div key={date} data-today={date === today}><span>{new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(dateValue(date)!)}</span><time dateTime={date}>{dateValue(date)!.getUTCDate()}</time><span className="athlete-schedule-mini-workout" title={rows.map(row => `${row.title} · ${stateLabel[row.state]}`).join(' / ')}>{loading && updatedAt === null ? '…' : rows.length ? rows.map(row => row.title).join(' / ') : '—'}</span></div>
     })}</div>}
     <div hidden={!expanded}>
     <div className="athlete-schedule-toolbar">
@@ -150,7 +148,7 @@ function ScheduleScope({ gym, athlete, assignment, full = false, getSchedule }: 
       </div>
       <label htmlFor={dateId}>Go to date <input id={dateId} type="date" value={selectedDate}
         onChange={event => { if (dateValue(event.target.value)) setSelectedDate(event.target.value) }} /></label>
-      <button type="button" onClick={() => setSelectedDate(today())}>This week</button>
+      <button type="button" onClick={() => setSelectedDate(localToday())}>This week</button>
     </div>
     {error ? <p className="athlete-schedule-error" role="alert">The athlete schedule could not be loaded. Refresh to try again.</p>
       : loading && updatedAt === null ? <p className="athlete-schedule-message" role="status">Loading athlete schedule…</p>
@@ -160,7 +158,7 @@ function ScheduleScope({ gym, athlete, assignment, full = false, getSchedule }: 
               const rows = workouts.filter(row => row.scheduled_date === date)
                 .sort((a, b) => a.week_ordinal - b.week_ordinal || a.day_ordinal - b.day_ordinal
                   || a.workout_instance_id.localeCompare(b.workout_instance_id))
-              return <article key={date} className="athlete-schedule-day" data-today={date === today()}>
+              return <article key={date} className="athlete-schedule-day" data-today={date === today}>
                 <h3>{new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(dateValue(date)!)}
                   <time dateTime={date}>{shortDate(date)}</time>
                 </h3>

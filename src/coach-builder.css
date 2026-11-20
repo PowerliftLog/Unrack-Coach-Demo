@@ -24,7 +24,6 @@
 }
 .ccb-cycle-strip button:hover:not(:disabled), .ccb-toolbar button:hover:not(:disabled) { border-color: var(--border-strong); }
 .ccb-cycle-strip button:disabled, .ccb-toolbar button:disabled { opacity: .55; cursor: default; }
-.ccb-step { min-width: 28px; }
 .ccb-cycle {
   display: grid;
   align-content: center;
@@ -35,7 +34,8 @@
   text-align: left;
 }
 .ccb-cycle-new { border-style: dashed; }
-.ccb-cycle strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccb-cycle strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.ccb-cycle-loading { margin: 0; color: var(--text-muted); }
 .ccb-cycle small { font: 600 10px 'IBM Plex Mono', monospace; text-transform: uppercase; }
 .ccb-cycle span, .ccb-cycle small, .ccb-tool-group span { color: var(--text-muted); }
 .ccb-cycle span, .ccb-tool-group span { font-size: 12px; }
@@ -56,11 +56,10 @@
 .ccb-tool-end { margin-left: auto; }
 .ccb-toolbar button[aria-expanded="true"], .ccb-toolbar button[aria-pressed="true"] { border-color: var(--accent); }
 .ccb-toolbar .ccb-primary { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 600; }
-.ccb-toolbar .ccb-status { font-weight: 600; }
-.ccb-toolbar .ccb-status-published { color: var(--green); background: var(--green-soft); }
-.ccb-toolbar .ccb-status-review { color: var(--red); background: var(--red-soft); }
-/* Match the sheet's yellow prescription flags. The theme's amber alias follows the primary accent. */
-.ccb-toolbar .ccb-status-draft { color: #6d4e10; background: #fff0b8; }
+.ccb-toolbar .ccb-status { display: grid; gap: 2px; text-align: right; font: 12px 'IBM Plex Mono', monospace; }
+.ccb-status small { color: var(--text-muted); font-size: 11px; }
+.ccb-toolbar .ccb-status-sent, .ccb-toolbar .ccb-status-live { color: var(--green); background: var(--green-soft); }
+.ccb-toolbar .ccb-status-unsaved { color: #6d4e10; background: #fff0b8; }
 .ccb-hint { display: block; padding: 8px 0; }
 .ccb-start > h1 { margin: 0 0 12px; }
 .ccb-readonly { margin: 8px 0; color: var(--text-muted); }

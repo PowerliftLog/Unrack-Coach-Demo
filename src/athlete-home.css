@@ -72,23 +72,39 @@
 .ah-week, .ah-list { margin: 0; padding: 0; list-style: none; }
 .ah-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 
+.ah-builder-link { color: var(--accent); text-decoration: underline; }
+
 .ah-day {
+  display: block;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface-subtle);
+  background: var(--surface);
+  color: var(--text);
+  font: 12px/1.35 var(--ah-mono);
+  text-align: left;
+  cursor: pointer;
 }
 
-.ah-day > time { display: block; margin-bottom: 3px; text-transform: uppercase; }
-.ah-day-workout { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
-.ah-day-workout strong, .ah-workout-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ah-day-workout strong { font-size: 12px; }
+.ah-day > time { display: block; margin-bottom: 2px; color: var(--text); text-transform: uppercase; }
 .ah-day-rest { background: transparent; border-style: dashed; }
 .ah-day[aria-current='date'] { border: 1px solid var(--accent); background: var(--accent-soft); }
-.ah-day[aria-current='date'] > time { color: var(--text); font-weight: 700; }
-.ah-rest { display: block; color: var(--text-muted); font-size: 11px; }
-.ah-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ah-day[aria-current='date'] > time { font-weight: 700; }
+.ah-day:hover { border-color: var(--accent); }
+.ah-day[aria-pressed='true'] { border: 1px solid var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ah-day:focus-visible, .ah-builder-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ah-day-lift { display: block; }
+.ah-day-lift, .ah-workout-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ah-day-detail { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.ah-day-detail h3 { font-size: 13px; }
+.ah-day-detail > div + div { margin-top: 10px; }
+.ah-day-detail table { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 13px; }
+.ah-day-detail td { padding: 4px 6px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.ah-day-detail td:last-child { text-align: right; }
 
 .ah-empty, .ah-state { margin: 6px 0 0; color: var(--text-muted); font-size: 13px; }
 .ah-outcome { color: var(--text-muted); font: 600 11px/1.25 var(--ah-mono); }

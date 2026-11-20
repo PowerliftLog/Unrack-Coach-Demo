@@ -4,6 +4,7 @@ import {CoachNotes} from './CoachNotes'
 import {PowerliftTrend,type PowerliftSeries} from './PowerliftTrend'
 import {bestSessionEstimatedOneRepMax} from './lib/estimated-1rm'
 import type {CoachAthleteActivityPageV1,CoachAthleteRecentWorkoutsV1,CoachAthleteMetricsV1,AthleteTrackingV1,CoachOverviewApi,PercentageProgrammingApi,Phase9ActivityApi,CoachRecentActivityItemV1} from './lib/coach-api'
+import {localToday} from './lib/local-date'
 import './client-overview.css'
 type Api=Partial<CoachOverviewApi&PercentageProgrammingApi&Phase9ActivityApi>
 type View='Overview'|'Schedule'|'History'|'Progress'|'Profile'
@@ -34,7 +35,7 @@ export function ClientOverview({api,gym,athlete,name,programName,onBack,onProfil
   useEffect(()=>{window.scrollTo(0,0)},[gym,athlete,view])
   const guard=(action:()=>void)=>{if(dirty&&!window.confirm('Leave this athlete and discard unsaved coach notes?'))return;action()}
   const more=async()=>{if(!api.getCoachAthleteActivityPageV1||!activity?.next_cursor||loading)return;const generation=historyGeneration.current;setLoading(true);try{const page=await api.getCoachAthleteActivityPageV1({gym,athlete,cursor:activity.next_cursor,page_size:20});if(generation!==historyGeneration.current)return;setActivity(current=>({...page,items:[...(current?.items??[]),...page.items.filter(item=>!current?.items.some(old=>old.activity_id===item.activity_id))]}));setError('')}catch{if(generation===historyGeneration.current)setError('More workouts could not be loaded. Try again.')}finally{if(generation===historyGeneration.current)setLoading(false)}}
-  const today=new Date();const localDate=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
+  const localDate=localToday()
   const next=calendar?.filter(item=>item.scheduled_date&&item.scheduled_date>=localDate&&['not_started','in_progress'].includes(item.state)).sort((a,b)=>a.scheduled_date!.localeCompare(b.scheduled_date!))[0]
   const isHistory=view==='History'
   const latest=recent?.summary.last_session

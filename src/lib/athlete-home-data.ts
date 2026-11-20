@@ -1,16 +1,79 @@
 import type { AthleteScheduleWorkout } from '../AthleteSchedulePanel'
 import type { PowerliftSeries } from '../PowerliftTrend'
-import type { CoachAthleteRecentWorkoutsV1, CoachDashboardCurrentAssignment, ProgrammingMaxRecordV1 } from './coach-api'
+import type { CoachAthleteRecentWorkoutsV1, Phase5CorrectionApi, CoachDashboardCurrentAssignment, ProgrammingMaxRecordV1 } from './coach-api'
+import { existingPlanPrescription } from './existing-plan-prescription'
 
 const DAY = 86_400_000
 const WEEK = 7 * DAY
 
 export type AthleteHomeCycle = Pick<CoachDashboardCurrentAssignment, 'assignment_id' | 'start_on' | 'end_on'>
-type WeekWorkout = Pick<AthleteScheduleWorkout, 'workout_instance_id' | 'state'> & { title: string; shortTitle: string }
+export type AthleteHomeAssignmentApi = Partial<Pick<Phase5CorrectionApi, 'getCoachAssignmentDetailV5' | 'getCoachAssignmentDayV6'>>
+
+export function currentCycleWorkouts(calendar: AthleteScheduleWorkout[], assignmentId: string) {
+  return calendar.filter(workout => workout.assignment_id === assignmentId)
+}
+
+export function createWeekExerciseReader(api: AthleteHomeAssignmentApi, assignmentId: string | undefined) {
+  if (!assignmentId || !api.getCoachAssignmentDetailV5 || !api.getCoachAssignmentDayV6) return
+  const assignment = assignmentId
+  const getDetail = api.getCoachAssignmentDetailV5
+  const getDay = api.getCoachAssignmentDayV6
+
+  async function readIndex() {
+    const detail = await getDetail({ assignment })
+    // Calendar ordinals identify the authoring day even when the workout was moved.
+    const tokens = new Map<string, string | null>(detail.weeks.flatMap(week => week.days.map(day =>
+      [`${week.week_ordinal}:${day.day_ordinal}`, day.day_identity_token] as const)))
+    return { detail, tokens }
+  }
+
+  let index: ReturnType<typeof readIndex> | undefined
+  async function readDay(key: string, { detail, tokens }: Awaited<ReturnType<typeof readIndex>>) {
+    const token = tokens.get(key)
+    if (!token) return null
+    try {
+      const { day, percent_basis_options } = await getDay({
+        assignment, day_identity_token: token, expected_detail_read_token: detail.detail_read_token,
+      })
+      if (day.mode !== 'editable') return null
+      const { movement_groups, ungrouped_exercises } = day.content
+      const exercises = [...movement_groups.flatMap(group => group.exercises), ...ungrouped_exercises]
+      return exercises.sort((a, b) => a.ordinal - b.ordinal).map(exercise => ({
+        ordinal: exercise.ordinal,
+        name: exercise.name,
+        prescription: exercise.set_groups.map(set => existingPlanPrescription(set, detail.default_unit,
+          percent_basis_options.find(option => option.exercise_id === set.percent_basis_exercise_id)?.name)).join(', ')
+          || exercise.protocol || 'No sets prescribed',
+      }))
+    } catch {
+      return null
+    }
+  }
+
+  // Cache promises so rapid week changes can share day reads already in flight.
+  const days = new Map<string, ReturnType<typeof readDay>>()
+  return async (workouts: AthleteScheduleWorkout[]) => {
+    index ??= readIndex().catch(error => {
+      index = undefined
+      throw error
+    })
+    const authoring = await index
+    const entries = await Promise.all(workouts.map(async workout => {
+      const key = `${workout.week_ordinal}:${workout.day_ordinal}`
+      let exercises = days.get(key)
+      if (!exercises) {
+        exercises = readDay(key, authoring)
+        days.set(key, exercises)
+      }
+      return [workout.workout_instance_id, await exercises] as const
+    }))
+    return new Map(entries)
+  }
+}
 
 export function calendarWeeks(calendar: AthleteScheduleWorkout[], cycle: AthleteHomeCycle | null, today: string) {
   if (!cycle) return null
-  const workouts = calendar.filter(workout => workout.assignment_id === cycle.assignment_id)
+  const workouts = currentCycleWorkouts(calendar, cycle.assignment_id)
   const datedWorkouts = workouts.filter(workout => workout.original_date || workout.scheduled_date)
   if (!datedWorkouts.length) return null
 
@@ -29,12 +92,11 @@ export function calendarWeeks(calendar: AthleteScheduleWorkout[], cycle: Athlete
     ...workouts.map(workout => workout.week_ordinal),
   )
   const currentIndex = Math.floor((Date.parse(today) - start) / WEEK)
-  const byDate = new Map<string, WeekWorkout[]>()
+  const byDate = new Map<string, AthleteScheduleWorkout[]>()
   for (const workout of workouts) {
     if (!workout.scheduled_date) continue
-    const { workout_instance_id, title, state } = workout
     const day = byDate.get(workout.scheduled_date) ?? []
-    day.push({ workout_instance_id, state, title, shortTitle: title.replace(/ day$/i, '') })
+    day.push(workout)
     byDate.set(workout.scheduled_date, day)
   }
 

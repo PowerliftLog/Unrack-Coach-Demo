@@ -46,3 +46,8 @@
 .ccd-running p { margin: 2px 0; }
 .ccd-running-warn { color: #8a5a00; }
 .ccd-running-offline { color: var(--muted, #5f5b55); }
+.ccd-two-screen .ccd-toolbar-notice { margin: 8px 0; color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.ccd-two-screen .ccb-toolbar + .ccd-published { margin: 8px 0 0; }
+.ccb-confirm { position: fixed; inset: 0; margin: auto; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; border: 0; overflow: auto; }
+.ccb-confirm::backdrop { background: #000000a8; }
+.ccb-confirm .dialog-actions { flex-wrap: wrap; }

@@ -8,7 +8,7 @@ import { athleteSetupMessage } from './lib/athlete-setup-message'
 import { CoachClientRemoval } from './CoachClientRemoval'
 import { CoachAthleteErasure } from './CoachAthleteErasure'
 import { PersonalTrackingInbox } from './PersonalTrackingInbox'
-import type { October18CoachApi, CoachDashboardRosterPageV4, CoachDashboardRosterItemV4, CoachTemplateReadinessV1, PreviewBuilderWeekCopyV3Input, PreviewBuilderWeekCopyV3Result } from './lib/coach-api'
+import type { October18CoachApi, CoachDashboardRosterPageV4, CoachDashboardRosterItemV4, PreviewBuilderWeekCopyV3Input, PreviewBuilderWeekCopyV3Result } from './lib/coach-api'
 import { WorkspaceSettings } from './WorkspaceSettings'
 import type { OwnerOnboardingApi } from './lib/coach-api'
 import { MaxReportInbox } from './MaxReportInbox'
@@ -18,13 +18,14 @@ import type { CoachOverviewApi } from './lib/coach-api'
 import { ClientOverview } from './ClientOverview'
 import { AthleteHome } from './AthleteHome'
 import { AthleteProfileDialog, AthleteProfileFields, AthleteProfilePanel, errorText, profileFromForm, type AthleteProfileTab } from './AthleteProfilePanel'
+import { localToday } from './lib/local-date'
 import { CoachShell, CoachShellAthleteHeader, CoachShellHome, useCoachShellRoute, type CoachShellRoute, type ShellAthlete } from './CoachShell'
 import { ExistingPlanViewer } from './ExistingPlanViewer'
 import { ActivityDetailContent, activityWorkoutTitle } from './ActivityDetailContent'
 import ApprovedWorkoutEditor from './ApprovedWorkoutEditor'
 import './approved-workspace.css'
 import { supersetIssue, supersetIssueMessage } from './lib/superset'
-import { Fragment, Suspense, lazy, useId, useEffect, useLayoutEffect, useContext, useCallback, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { Fragment, Suspense, lazy, useId, useEffect, useMemo, useLayoutEffect, useContext, useCallback, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import type { createCoachCycleTemplateApi } from './lib/coach-cycle-template-api'
 import type { createCoachCycleDraftApi } from './lib/coach-cycle-draft-api'
 import type { createCoachCyclePublishApi } from './lib/coach-cycle-publish-api'
@@ -35,7 +36,6 @@ import type { AthleteProfileInputV1, PercentageProgrammingApi, ExerciseOptionV1,
 import { CoachApiError, type ApplyBuilderCopyV1Result, type ApplyBuilderCopyV2Result, type ApplyBuilderProgressionV1Result, type ApplyBuilderProgressionV2Input, type ApplyWorkoutTemplateV1Input, type ApplyWorkoutTemplateV4Input, type ConnectedCoachApiV3 as ConnectedCoachApi, type ConnectedCoachApiV4, type CoachAssignmentDayV4, type CoachAssignmentDayV5, type CoachProgramCalendar, type CoachAssignmentDetailV4, type CoachAssignmentDetailV5, type CoachAssignmentWeekSummaryV4, type CoachAssignmentWeekSummaryV5, type CoachBuilderOperationResult, type CoachDashboardAssignmentItemV2, type CoachDashboardAssignmentsPageV1, type CoachDashboardAssignmentsPageV2, type CoachDashboardRosterPageV1, type CoachDashboardRosterPageV2, type CoachNavigationAssignmentsCursor, type CoachNavigationAssignmentsReadToken, type CoachNavigationGymsCursor, type CoachNavigationGymsReadToken, type CoachNavigationRosterCursor, type CoachNavigationRosterReadToken, type CoachReadinessIssueV1, type CoachRepsV3, type CopyDestination, type Phase55AssignmentLifecycleApi, type Phase55DashboardReadsApi, type Phase55WorkoutTemplateLibraryApi, type Phase5CorrectionApi, type Phase6ProgramArchiveApi, type Phase9ActivityApi, type CoachRecentActivityPageV1, type CoachRecentActivityItemV1, type PreviewBuilderCopyV1Input, type PreviewBuilderCopyV1Result, type PreviewBuilderCopyV2Input, type PreviewBuilderCopyV2Result, type PreviewBuilderProgressionV1Input, type PreviewBuilderProgressionV1Result, type PreviewBuilderProgressionV2Input, type PreviewBuilderProgressionV2Result, type ProgressionScope, type ProgressionTransform, type ProgressionV2AfterValue, type ProgressionV2Override, type ProgressionV2Rule, type ProgressionV2Scope, type ProgressionValue, type SetCoachProgramReadinessV1Result, type CoachProgramDayV3, type CoachProgramDayV5, type CoachSetGroupV3, type CoachSetGroupV5, type CoachWorkspaceV3 as CoachWorkspace, type SaveCoachProgramDayV2, type SaveCoachProgramDayV3, type SaveCoachIndividualSet, type SaveCoachIndividualSetV3, type SaveCoachProgramDayV2Result } from './lib/coach-api'
 import { phase55CapabilityMode } from './lib/config'
 import { ModalDialog } from './ModalDialog'
-import type { Phase9ProgramTemplateApi } from './lib/coach-api'
 import { ThemeToggle } from './App'
 import type { Theme } from './lib/theme'
 import QRCode from 'qrcode'
@@ -43,7 +43,7 @@ import { PwaPairingApiError, type AthleteConnectionStatus, type PwaPairingCoachA
 import { buildProgramExportSheets, downloadProgramXlsx, type ExportDay } from './lib/program-xlsx'
 import './rich-day-compact.css'
 
-type Props = CyclePreviewV2Props & { api: ConnectedCoachApi & Partial<ConnectedCoachApiV4> & Partial<Phase5CorrectionApi> & Partial<Phase55DashboardReadsApi> & Partial<Phase55AssignmentLifecycleApi> & Partial<Phase55WorkoutTemplateLibraryApi> & Partial<Phase6ProgramArchiveApi> & Partial<Phase9ActivityApi> & Partial<Phase9ProgramTemplateApi> & Partial<PwaPairingCoachApi> & Partial<OwnerOnboardingApi> & Partial<October18CoachApi>; cycleExcelPublishApi?: ReturnType<typeof createCoachExcelPublishApi> | null; cycleExcelPreviewApi?: ReturnType<typeof createCoachExcelPreviewApi> | null; cyclePublishPreviewApi?: Pick<ReturnType<typeof createCoachCyclePublishApi>, 'preview'> | null; cycleTemplateApi?: ReturnType<typeof createCoachCycleTemplateApi> | null; cycleDraftApi?: ReturnType<typeof createCoachCycleDraftApi> | null; coachDisplayName?: string; onCoachNameSaved?(value: string): void; onSignOut(): void; theme?: Theme; onToggleTheme?: () => void; enablePhase5Corrections?: boolean; enablePhase55DashboardReads?: boolean; enablePhase55AssignmentLifecycle?: boolean; enablePhase55TemplateLibrary?: boolean; enablePhase6ProgramArchive?: boolean; enablePwaPairing?: boolean }
+type Props = CyclePreviewV2Props & { api: ConnectedCoachApi & Partial<ConnectedCoachApiV4> & Partial<Phase5CorrectionApi> & Partial<Phase55DashboardReadsApi> & Partial<Phase55AssignmentLifecycleApi> & Partial<Phase55WorkoutTemplateLibraryApi> & Partial<Phase6ProgramArchiveApi> & Partial<Phase9ActivityApi> & Partial<PwaPairingCoachApi> & Partial<OwnerOnboardingApi> & Partial<October18CoachApi>; cycleExcelPublishApi?: ReturnType<typeof createCoachExcelPublishApi> | null; cycleExcelPreviewApi?: ReturnType<typeof createCoachExcelPreviewApi> | null; cyclePublishPreviewApi?: Pick<ReturnType<typeof createCoachCyclePublishApi>, 'preview'> | null; cycleTemplateApi?: ReturnType<typeof createCoachCycleTemplateApi> | null; cycleDraftApi?: ReturnType<typeof createCoachCycleDraftApi> | null; coachDisplayName?: string; onCoachNameSaved?(value: string): void; onSignOut(): void; theme?: Theme; onToggleTheme?: () => void; enablePhase5Corrections?: boolean; enablePhase55DashboardReads?: boolean; enablePhase55AssignmentLifecycle?: boolean; enablePhase55TemplateLibrary?: boolean; enablePhase6ProgramArchive?: boolean; enablePwaPairing?: boolean }
 // The spreadsheet engine is excluded from default-off production builds.
 const CoachCycleDraftWorkspace = import.meta.env.VITE_COACH_CYCLE_DRAFTS_ENABLED === 'enabled'
   ? lazy(() => import('./CoachCycleDraftWorkspace')) : null
@@ -52,7 +52,6 @@ const CoachBuilderStart = CoachCycleDraftWorkspace
 const CoachCycleGeneralV4Workspace = import.meta.env.VITE_COACH_CYCLE_GENERAL_V4_ENABLED === 'enabled'
   ? lazy(() => import('./CoachCycleGeneralV4Workspace')) : null
 const createErrorText = (error: unknown) => error instanceof CoachApiError ? error.message : 'The program could not be created. Check your connection and try again.'
-const localToday = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` }
 const initials = (name: string) => name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase()
 
 const humanLabels = {
@@ -121,23 +120,20 @@ const progressionV2Api = (api: Phase5CorrectionApi | null): Phase5CorrectionApi 
 ].every(method => typeof method === 'function') ? api : null
 const phase55DashboardApi = (api: Props['api'], enabled: boolean): Phase55DashboardReadsApi | null => enabled && [api.getCoachDashboardRosterPageV1, api.getCoachDashboardAssignmentsPageV1].every(method => typeof method === 'function') ? api as Phase55DashboardReadsApi : null
 const phase55AssignmentLifecycleApi = (api: Props['api'], enabled: boolean): Phase55AssignmentLifecycleApi | null => enabled && [api.createCalendarProgramV2, api.activateAndPublishCoachAssignmentV1].every(method => typeof method === 'function') ? api as Phase55AssignmentLifecycleApi : null
-const phase55WorkoutTemplateApi = (api: Props['api'], enabled: boolean): Phase55WorkoutTemplateLibraryApi | null => enabled && [api.getCoachWorkoutTemplateLibraryPageV1, api.createCoachWorkoutTemplateV1, api.getCoachWorkoutTemplateDetailV1, api.getCoachWorkoutTemplateDayV1, api.saveCoachWorkoutTemplateDayV1, api.setCoachWorkoutTemplateReadinessV1, api.archiveCoachWorkoutTemplateV1, api.restoreCoachWorkoutTemplateV1, api.applyCoachWorkoutTemplateV1].every(method => typeof method === 'function') ? api as Phase55WorkoutTemplateLibraryApi : null
 const phase6ProgramArchiveApi = (api: Props['api'], enabled: boolean): Phase6ProgramArchiveApi | null => enabled && [api.getCoachDashboardAssignmentsPageV2, api.archiveCoachProgramV1, api.restoreCoachProgramV1].every(method => typeof method === 'function') ? api as Phase6ProgramArchiveApi : null
 const phase55AuthorityKey = (gym: string, athlete: string) => JSON.stringify([gym, athlete])
 
 export default function ConnectedCoachApp(props: Props) {
   const dashboardApi = phase55DashboardApi(props.api, Boolean(props.enablePhase55DashboardReads))
   const lifecycleApi = phase55AssignmentLifecycleApi(props.api, Boolean(props.enablePhase55AssignmentLifecycle))
-  const workoutTemplateApi = phase55WorkoutTemplateApi(props.api, Boolean(props.enablePhase55TemplateLibrary))
   const programArchiveApi = phase6ProgramArchiveApi(props.api, Boolean(props.enablePhase6ProgramArchive))
   const activityApi: Phase9ActivityApi | null = typeof props.api.getCoachRecentActivityPageV1 === 'function' ? props.api as Phase9ActivityApi : null
-  const programTemplateApi: Phase9ProgramTemplateApi | null = typeof props.api.getCoachProgramTemplateLibraryV1 === 'function' ? props.api as Phase9ProgramTemplateApi : null
   const pairingApi: PwaPairingCoachApi | null = props.enablePwaPairing && typeof props.api.issueAthleteInvite === 'function' ? props.api as PwaPairingCoachApi : null
   let workspace: ReactNode
   if (!isV4(props.api)) workspace = <Phase55CapabilityUnavailable onSignOut={props.onSignOut} />
   else {
   const mode = phase55CapabilityMode(Boolean(props.enablePhase55DashboardReads), Boolean(props.enablePhase55AssignmentLifecycle))
-    if (mode === 'complete' && dashboardApi && lifecycleApi) workspace = <Phase55Dashboard cycleGeneralV4Api={props.cycleGeneralV4Api} cycleGeneralV4PublicationApi={props.cycleGeneralV4PublicationApi} cycleGeneralV5PublicationApi={props.cycleGeneralV5PublicationApi} coachDisplayName={props.coachDisplayName} onCoachNameSaved={props.onCoachNameSaved} api={props.api} cycleExcelBetaReview={props.cycleExcelBetaReview} cycleDraftApi={props.cycleDraftApi ?? null} cycleExcelPublishApi={props.cycleExcelPublishApi ?? null} cycleExcelPreviewApi={props.cycleExcelPreviewApi ?? null} cycleTemplateApi={props.cycleTemplateApi ?? null} cyclePublishPreviewApi={props.cyclePublishPreviewApi ?? null} cycleCommitV2Api={props.cycleCommitV2Api} cyclePreviewV2Api={props.cyclePreviewV2Api} cyclePreviewV2AdmissionVersion={props.cyclePreviewV2AdmissionVersion} cycleOwnerSubject={props.cycleOwnerSubject} dashboardApi={dashboardApi} lifecycleApi={lifecycleApi} workoutTemplateApi={workoutTemplateApi} programArchiveApi={programArchiveApi} activityApi={activityApi} programTemplateApi={programTemplateApi} pairingApi={pairingApi} onSignOut={props.onSignOut} correctionsApi={phase5Api(props.api, Boolean(props.enablePhase5Corrections))} phase54Api={phase54Api(props.api, Boolean(props.enablePhase5Corrections))} />
+    if (mode === 'complete' && dashboardApi && lifecycleApi) workspace = <Phase55Dashboard cycleGeneralV4Api={props.cycleGeneralV4Api} cycleGeneralV4PublicationApi={props.cycleGeneralV4PublicationApi} cycleGeneralV5PublicationApi={props.cycleGeneralV5PublicationApi} coachDisplayName={props.coachDisplayName} onCoachNameSaved={props.onCoachNameSaved} api={props.api} cycleExcelBetaReview={props.cycleExcelBetaReview} cycleDraftApi={props.cycleDraftApi ?? null} cycleExcelPublishApi={props.cycleExcelPublishApi ?? null} cycleExcelPreviewApi={props.cycleExcelPreviewApi ?? null} cycleTemplateApi={props.cycleTemplateApi ?? null} cyclePublishPreviewApi={props.cyclePublishPreviewApi ?? null} cycleCommitV2Api={props.cycleCommitV2Api} cyclePreviewV2Api={props.cyclePreviewV2Api} cyclePreviewV2AdmissionVersion={props.cyclePreviewV2AdmissionVersion} cycleOwnerSubject={props.cycleOwnerSubject} dashboardApi={dashboardApi} lifecycleApi={lifecycleApi} programArchiveApi={programArchiveApi} activityApi={activityApi} pairingApi={pairingApi} onSignOut={props.onSignOut} correctionsApi={phase5Api(props.api, Boolean(props.enablePhase5Corrections))} phase54Api={phase54Api(props.api, Boolean(props.enablePhase5Corrections))} />
     else workspace = <Phase55CapabilityUnavailable onSignOut={props.onSignOut} />
   }
   return <>{props.theme && props.onToggleTheme && <div className="connected-theme-control"><ThemeToggle theme={props.theme} onToggle={props.onToggleTheme} /></div>}{workspace}</>
@@ -147,7 +143,7 @@ function Phase55CapabilityUnavailable({ onSignOut, onRetry }: { onSignOut(): voi
   return <main className="connected-app approved-home phase55-unavailable"><section className="signin-panel" role="status"><p className="eyebrow">WORKSPACE UPDATE</p><h1>Calendar update unavailable</h1><p>Your coach workspace is updating. Please retry shortly; program changes are unavailable until the calendar update is complete.</p>{onRetry && <button className="button outline" onClick={onRetry}>Retry</button>}<button className="text-button" onClick={onSignOut}>Sign out</button></section></main>
 }
 
-function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGeneralV4PublicationApi, cycleGeneralV5PublicationApi, coachDisplayName, onCoachNameSaved, api, cycleDraftApi, cycleTemplateApi, cycleExcelPublishApi, cycleExcelPreviewApi, cyclePublishPreviewApi, cycleCommitV2Api, cyclePreviewV2Api, cyclePreviewV2AdmissionVersion, cycleOwnerSubject, dashboardApi, lifecycleApi, workoutTemplateApi, programArchiveApi, activityApi, programTemplateApi, pairingApi, correctionsApi, phase54Api, onSignOut }: CyclePreviewV2Props & { coachDisplayName?: string; onCoachNameSaved?(value: string): void; api: ConnectedCoachApiV4 & Partial<PercentageProgrammingApi & CoachOverviewApi & OwnerOnboardingApi & October18CoachApi>; cycleExcelPublishApi: ReturnType<typeof createCoachExcelPublishApi> | null; cycleExcelPreviewApi: ReturnType<typeof createCoachExcelPreviewApi> | null; cyclePublishPreviewApi: Pick<ReturnType<typeof createCoachCyclePublishApi>, 'preview'> | null; cycleTemplateApi: ReturnType<typeof createCoachCycleTemplateApi> | null; cycleDraftApi: ReturnType<typeof createCoachCycleDraftApi> | null; dashboardApi: Phase55DashboardReadsApi; lifecycleApi: Phase55AssignmentLifecycleApi; workoutTemplateApi: Phase55WorkoutTemplateLibraryApi | null; programArchiveApi: Phase6ProgramArchiveApi | null; activityApi: Phase9ActivityApi | null; programTemplateApi: Phase9ProgramTemplateApi | null; pairingApi: PwaPairingCoachApi | null; correctionsApi: Phase5CorrectionApi | null; phase54Api: Phase5CorrectionApi | null; onSignOut(): void }) {
+function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGeneralV4PublicationApi, cycleGeneralV5PublicationApi, coachDisplayName, onCoachNameSaved, api, cycleDraftApi, cycleTemplateApi, cycleExcelPublishApi, cycleExcelPreviewApi, cyclePublishPreviewApi, cycleCommitV2Api, cyclePreviewV2Api, cyclePreviewV2AdmissionVersion, cycleOwnerSubject, dashboardApi, lifecycleApi, programArchiveApi, activityApi, pairingApi, correctionsApi, phase54Api, onSignOut }: CyclePreviewV2Props & { coachDisplayName?: string; onCoachNameSaved?(value: string): void; api: ConnectedCoachApiV4 & Partial<PercentageProgrammingApi & CoachOverviewApi & OwnerOnboardingApi & October18CoachApi>; cycleExcelPublishApi: ReturnType<typeof createCoachExcelPublishApi> | null; cycleExcelPreviewApi: ReturnType<typeof createCoachExcelPreviewApi> | null; cyclePublishPreviewApi: Pick<ReturnType<typeof createCoachCyclePublishApi>, 'preview'> | null; cycleTemplateApi: ReturnType<typeof createCoachCycleTemplateApi> | null; cycleDraftApi: ReturnType<typeof createCoachCycleDraftApi> | null; dashboardApi: Phase55DashboardReadsApi; lifecycleApi: Phase55AssignmentLifecycleApi; programArchiveApi: Phase6ProgramArchiveApi | null; activityApi: Phase9ActivityApi | null; pairingApi: PwaPairingCoachApi | null; correctionsApi: Phase5CorrectionApi | null; phase54Api: Phase5CorrectionApi | null; onSignOut(): void }) {
   type RosterPage = CoachDashboardRosterPageV1 | CoachDashboardRosterPageV2 | CoachDashboardRosterPageV4
   const twoScreen = import.meta.env.VITE_COACH_TWO_SCREEN === 'enabled'
   const [rosterV4Unavailable, setRosterV4Unavailable] = useState(false)
@@ -177,11 +173,6 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   const [opening, setOpening] = useState<{ gym: string; assignment: string; athlete: string; athleteName: string; expectedCurrentAssignment: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [capabilityUnavailable, setCapabilityUnavailable] = useState(false)
-  const [applyProgramTemplate, setApplyProgramTemplate] = useState<{ templateId: string; builderVersion: number; name: string; athlete: string; programName: string; startOn: string; requestId: string } | null>(null)
-  const [applyProgramTemplateBusy, setApplyProgramTemplateBusy] = useState(false)
-  const [applyProgramTemplateError, setApplyProgramTemplateError] = useState<string | null>(null)
-  const [applyProgramTemplatePreview, setApplyProgramTemplatePreview] = useState<TemplatePercentPreviewV1 | null>(null)
-  const [templateUnavailable, setTemplateUnavailable] = useState(false)
   const [pairingFor, setPairingFor] = useState<{ athleteId: string; athleteName: string } | null>(null)
   const workspaceNavigation = useRef<((action: () => void) => void) | null>(null)
   const overviewDirty = useRef(false)
@@ -222,7 +213,7 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   const shellSelection = useRef<{ gym: string; athlete: ShellAthlete } | null>(null)
   const profileWorkspace = useRef(gym)
   profileWorkspace.current = gym
-  const [shellRoute, setShellRoute] = useCoachShellRoute(twoScreen, leaveShellScreen)
+  const [shellRoute, setShellRoute, withShellLeaveGuard] = useCoachShellRoute(twoScreen, leaveShellScreen)
   const onOverviewDirty = useCallback((value: boolean) => { overviewDirty.current = value }, [])
 
   function confirmDiscardNotes() {
@@ -230,7 +221,15 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   }
 
   function leaveShellScreen() {
-    if (!confirmDiscardNotes() || shellBuilder.current?.canLeave() === false) return false
+    if (!confirmDiscardNotes()) return false
+    const builder = shellBuilder.current
+    if (builder && !builder.canLeave()) {
+      return () => builder.requestLeave().then(allowed => allowed && finishLeavingShellScreen())
+    }
+    return finishLeavingShellScreen()
+  }
+
+  function finishLeavingShellScreen() {
     newShellDraft.current = null
     overviewDirty.current = false
     setOverviewActivity(null)
@@ -240,7 +239,9 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   }
 
   function navigateShell(next: CoachShellRoute) {
-    if ((next.tab !== shellRoute.tab || next.athlete !== shellRoute.athlete) && leaveShellScreen()) setShellRoute(next)
+    if (next.tab !== shellRoute.tab || next.athlete !== shellRoute.athlete) {
+      withShellLeaveGuard(() => setShellRoute(next))
+    }
   }
   const [retryGeneration, setRetryGeneration] = useState(0)
   const gymGeneration = useRef(0)
@@ -249,9 +250,7 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   const groupTimers = useRef<{ needs_programming: number | null; current_clients: number | null }>({ needs_programming: null, current_clients: null })
   const plansGeneration = useRef(0)
   const promotedCurrentAuthority = useRef(new Map<string, string>())
-  const activeWorkoutTemplateApi = templateUnavailable ? null : workoutTemplateApi
   const activeProgramArchiveApi = archiveUnavailable ? null : programArchiveApi
-  const nextMonday = () => { const date = new Date(); date.setDate(date.getDate() + (8 - date.getDay()) % 7); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
   const unsupported = (cause: unknown) => cause instanceof CoachApiError && cause.code === 'request_rejected' && cause.status === 404
   const dashboardChanged = (cause: unknown) => cause instanceof CoachApiError && cause.code === 'dashboard_read_changed'
   const normalizedSearch = (value: string) => value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US') || null
@@ -371,33 +370,6 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
       void loadGroup(groupKind, groupQuery.current[groupKind], false)
     }
   }
-  const applySelectedProgramTemplate = async () => {
-    const draft = applyProgramTemplate
-    const preview = applyProgramTemplatePreview
-    if (!draft || !preview || !canApplyTemplatePercentPreview(preview) || preview.template_id !== draft.templateId || preview.template_builder_version !== draft.builderVersion || preview.athlete_id !== draft.athlete || !programTemplateApi || !gym || !draft.athlete || !draft.programName.trim()) return
-    const date = new Date(`${draft.startOn}T00:00:00Z`)
-    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== draft.startOn || date.getUTCDay() !== 1) { setApplyProgramTemplateError('Choose a Monday start date.'); return }
-    setApplyProgramTemplateBusy(true); setApplyProgramTemplateError(null)
-    try {
-      const result = await programTemplateApi.applyCoachProgramTemplateV2({ request_id: draft.requestId, template: draft.templateId,
-        expected_template_builder_version: draft.builderVersion, athlete: draft.athlete, program_name: draft.programName.trim(), start_on: draft.startOn, preview_fingerprint: preview.fingerprint })
-      const athlete = rosterClients.find(entry => entry.item.athlete_id === draft.athlete)?.item
-      setApplyProgramTemplate(null); setApplyProgramTemplatePreview(null)
-      setOpening({ gym, athlete: draft.athlete, athleteName: athlete?.roster_name ?? 'Selected client',
-        assignment: result.assignment_id, expectedCurrentAssignment: athlete?.current_assignment_id ?? null })
-      refreshDashboardGroups()
-    } catch (cause) { setApplyProgramTemplatePreview(null); setApplyProgramTemplateError(`${errorText(cause)} Review percentage loads again before retrying.`) }
-    finally { setApplyProgramTemplateBusy(false) }
-  }
-  const reviewSelectedProgramTemplate = async () => {
-    const draft = applyProgramTemplate
-    const previewApi = api as ConnectedCoachApiV4 & Pick<Phase55WorkoutTemplateLibraryApi, 'previewCoachTemplatePercentV1'>
-    if (!draft?.athlete || !previewApi.previewCoachTemplatePercentV1) { setApplyProgramTemplateError('Percentage preflight is unavailable. This template cannot be applied yet.'); return }
-    setApplyProgramTemplateBusy(true); setApplyProgramTemplateError(null); setApplyProgramTemplatePreview(null)
-    try { setApplyProgramTemplatePreview(await previewApi.previewCoachTemplatePercentV1({ template: draft.templateId, athlete: draft.athlete, expected_template_builder_version: draft.builderVersion, program: null, expected_program_builder_version: null })) }
-    catch (cause) { setApplyProgramTemplateError(errorText(cause)) }
-    finally { setApplyProgramTemplateBusy(false) }
-  }
   const removalDialog = removal && gym ? <CoachClientRemoval api={api} gym={gym} client={removal.client}
     onClose={() => setRemoval(null)} onChanged={() => {
       setOverviewFor(null)
@@ -424,8 +396,9 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   const openCycleBuilder = (client: NonNullable<typeof overviewClient>, active = false) => navigateWorkspace(() => setCycleDraftFor(cycleTarget(client, active)))
   const navigateWorkspace = (action:()=>void) => { if (opening) { workspaceNavigation.current?.(action); return } if (overviewDirty.current && !window.confirm('Discard unsaved coach notes?')) return; overviewDirty.current=false; action() }
   const clientShell = (content:ReactNode) => { const activeId=opening?.athlete ?? overviewClient?.athlete_id; const clientItems=[...(needs?.items??[]),...(current?.items??[])].filter((item,index,items)=>items.findIndex(candidate=>candidate.athlete_id===item.athlete_id)===index); return <div className="approved-live"><aside className="approved-client-rail" aria-label="Clients"><div className="brand">UNRACK <small>COACH</small></div><button className="text-button" onClick={()=>navigateWorkspace(()=>{setOpening(null);setOverviewFor(null)})}>← All clients</button><input aria-label="Search clients" placeholder="Search clients" value={workspaceSearch} onChange={event=>setWorkspaceSearch(event.target.value)}/><nav>{clientItems.filter(item=>item.roster_name.toLowerCase().includes(workspaceSearch.toLowerCase())).map(item=><button key={item.athlete_id} aria-current={activeId===item.athlete_id?'page':undefined} onClick={()=>navigateWorkspace(()=>{setOpening(null);setOverviewFor(item);setOverviewActivity(null)})}>{item.roster_name}</button>)}</nav>{(needs?.has_more||current?.has_more)&&<button className="text-button" onClick={()=>navigateWorkspace(()=>{setOpening(null);setOverviewFor(null)})}>Browse all clients →</button>}<button className="text-button" onClick={()=>navigateWorkspace(onSignOut)}>Sign out</button></aside><section className="approved-client-main"><div id="client-screen-panel" role="tabpanel" aria-label="Client overview">{content}</div></section></div> }
-  const renderCycleBuilder = (target: NonNullable<typeof cycleDraftFor>, onBack: () => void, shellToday?: string) => {
-    if (!shellToday && gym && cycleGeneralV4Api && cycleOwnerSubject && CoachCycleGeneralV4Workspace) {
+  const today = localToday()
+  const renderCycleBuilder = (target: NonNullable<typeof cycleDraftFor>, onBack: () => void, inShell = false) => {
+    if (!inShell && gym && cycleGeneralV4Api && cycleOwnerSubject && CoachCycleGeneralV4Workspace) {
       return <Suspense fallback={<p role="status">Opening private cycle workspace…</p>}>
         <CoachCycleGeneralV4Workspace api={cycleGeneralV4Api} publicationApi={cycleGeneralV4PublicationApi}
           publicationV5Api={cycleGeneralV5PublicationApi} ownerSubject={cycleOwnerSubject}
@@ -442,10 +415,10 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
           athleteHistory={api.getCoachAthleteExerciseHistoryV1} draftNames autoOpen openProgram={target.openProgram}
           getProgrammingMaxesV1={api.getProgrammingMaxesV1} getAthleteTrackingV1={api.getAthleteTrackingV1}
           erasedAthleteDraftApi={api} libraryClients={clients.map(item => ({ id: item.athlete_id, name: item.roster_name }))}
-          {...(shellToday ? {
-            layout: 'two-screen' as const, today: shellToday, navigationRef: shellBuilder,
+          {...(inShell ? {
+            layout: 'two-screen' as const, navigationRef: shellBuilder,
             initialDraftId: newShellDraft.current?.gym === gym && newShellDraft.current.athlete === target.athlete ? newShellDraft.current.id : undefined,
-          } : {})} onBack={onBack} />
+          } : {})} today={today} onBack={onBack} />
       </Suspense>
     }
     return null
@@ -490,6 +463,13 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   const selectedAthlete = knownAthlete ?? (lastAthlete && lastAthlete.gym === gym
     && lastAthlete.athlete.item.athlete_id === shellRoute.athlete
     && (!canResolveAthlete || moreNeeds || moreCurrent) ? lastAthlete.athlete : null)
+  const currentAssignment = selectedAthlete?.item.current_assignment
+  const assignmentId = currentAssignment?.assignment_id ?? selectedAthlete?.item.current_assignment_id
+  const startOn = currentAssignment?.start_on ?? null
+  const endOn = currentAssignment?.end_on ?? null
+  const scheduleCycle = useMemo(() => assignmentId ? {
+    assignment_id: assignmentId, start_on: startOn, end_on: endOn,
+  } : null, [assignmentId, startOn, endOn])
   useEffect(() => {
     if (!twoScreen || !gym || !shellRoute.athlete) { shellSelection.current = null; return }
     if (knownAthlete) { shellSelection.current = { gym, athlete: knownAthlete }; return }
@@ -504,10 +484,14 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
   }, [twoScreen, gym, shellRoute, needs, current, dashboardSearchPending, error])
 
   function changeWorkspace(nextGym: string) {
-    if (twoScreen) {
-      if (!leaveShellScreen()) return
+    if (!twoScreen) return openWorkspace(nextGym)
+    withShellLeaveGuard(() => {
       setShellRoute({ ...shellRoute, athlete: null }, true)
-    }
+      openWorkspace(nextGym)
+    })
+  }
+
+  function openWorkspace(nextGym: string) {
     groupGeneration.current.needs_programming += 1
     groupGeneration.current.current_clients += 1
     for (const group of ['needs_programming', 'current_clients'] as const) {
@@ -556,12 +540,8 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
     const refreshProfileRoster = () => {
       if (profileWorkspace.current === gym) refreshDashboardGroups()
     }
-    const scheduleCycle = client?.current_assignment ?? (client?.current_assignment_id ? {
-      assignment_id: client.current_assignment_id, start_on: null, end_on: null,
-    } : null)
-    const today = current?.server_as_of_date ?? needs?.server_as_of_date ?? localToday()
     const shellCanBuild = canManageAthletes && gym && cycleDraftApi && CoachBuilderStart
-    const builder = shellCanBuild && (client ? renderCycleBuilder(cycleTarget(client), onBuilderBack, today)
+    const builder = shellCanBuild && (client ? renderCycleBuilder(cycleTarget(client), onBuilderBack, true)
       : <Suspense fallback={<p role="status">Opening cycle setup…</p>}>
         <CoachBuilderStart key={gym} api={cycleDraftApi} gym={gym} navigationRef={shellBuilder}
           clients={shellAthletes.map(athlete => ({ id: athlete.item.athlete_id, name: athlete.item.roster_name }))}
@@ -582,26 +562,28 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
       onNavigate={navigateShell} onSettings={canOpenSettings ? () => setSettingsOpen(true) : undefined}
       onAdd={canManageAthletes ? () => setAddingAthlete(true) : undefined}
       onRemoved={canManageAthletes ? () => setRemoval({ client: null }) : undefined}
-      onSignOut={() => { if (leaveShellScreen()) onSignOut() }}>
+      onSignOut={() => withShellLeaveGuard(onSignOut)}>
       {settingsDialog}
       {dashboardDialogs}
       {erasureNotice && erasureNotice.gym === gym && <p className="workspace-notice" role="status">{erasureNotice.text}</p>}
       {error && <p className="workspace-error" role="alert">{error}</p>}
       {resolvingAthlete ? <p role="status">Loading athlete…</p> : shellRoute.tab === 'builder' ?
         builder || <p>{selectedAthlete ? 'Cycle building is unavailable for this athlete.' : 'Cycle building is unavailable in this workspace.'}</p> : selectedAthlete && gym ? <Fragment key={`${gym}:${selectedAthlete.item.athlete_id}`}>
-        <CoachShellAthleteHeader athlete={selectedAthlete} profileOpen={profileOpen}
-          onProfile={() => setProfileFor(profileOpen ? null : profile)}
-          onConnect={pairingApi ? () => setPairingFor(profile) : undefined}
-          onRemove={canManageAthletes ? () => {
-            if (confirmDiscardNotes()) setRemoval({ client: { athlete: selectedAthlete.item.athlete_id, name: selectedAthlete.item.roster_name } })
-          } : undefined}
-          onErase={canManageAthletes && api.eraseCoachAthleteV1 ? () => {
-            if (!confirmDiscardNotes()) return
-            setErasureNotice(null)
-            setErasure({ gym, athlete: selectedAthlete.item.athlete_id, name: selectedAthlete.item.roster_name })
-          } : undefined} />
         <AthleteHome api={api} gym={gym} athlete={selectedAthlete.item.athlete_id} today={today}
-          cycle={scheduleCycle} hidden={profileOpen}
+          cycle={scheduleCycle} programName={currentAssignment?.program_name ?? selectedAthlete.program} hidden={profileOpen}
+          queuedState={cycleExcelBetaReview?.nextCycleApi?.queuedState} gateEpoch={cycleExcelBetaReview?.gateEpoch}
+          renderHeader={(programLine, nextProgramLine) => <CoachShellAthleteHeader athlete={selectedAthlete}
+            programLine={programLine} nextProgramLine={nextProgramLine} profileOpen={profileOpen}
+            onProfile={() => setProfileFor(profileOpen ? null : profile)}
+            onConnect={pairingApi ? () => setPairingFor(profile) : undefined}
+            onRemove={canManageAthletes ? () => {
+              if (confirmDiscardNotes()) setRemoval({ client: { athlete: selectedAthlete.item.athlete_id, name: selectedAthlete.item.roster_name } })
+            } : undefined}
+            onErase={canManageAthletes && api.eraseCoachAthleteV1 ? () => {
+              if (!confirmDiscardNotes()) return
+              setErasureNotice(null)
+              setErasure({ gym, athlete: selectedAthlete.item.athlete_id, name: selectedAthlete.item.roster_name })
+            } : undefined} />}
           onDirtyChange={onOverviewDirty} onActivity={item => setOverviewActivity(item.activity_id)} />
         {profileOpen && <AthleteProfilePanel api={api} gymId={gym} athleteId={selectedAthlete.item.athlete_id}
           canEditPresets={canManageAthletes} initialReportId={profileFor?.reportId}
@@ -613,11 +595,10 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
           <RecentActivityPanel api={activityApi} gym={gym} />
           {gym && <PersonalTrackingInbox key={gym} api={api} gym={gym} />}
         </div>} api={api} gym={gym} reportRevision={reportRevision}
-        onPick={pick} onReport={report => {
-          if (!leaveShellScreen()) return
+        onPick={pick} onReport={report => withShellLeaveGuard(() => {
           setShellRoute({ tab: 'athletes', athlete: report.athlete_id })
           setProfileFor({ athleteId: report.athlete_id, athleteName: report.athlete_name, reportId: report.report_id })
-        }} />}
+        })} />}
     </CoachShell>
   }
   if (cycleDraftFor) {
@@ -638,7 +619,6 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
     <section className="connected-main">
       <header className="connected-header phase55-header"><div><p className="eyebrow">COACH DASHBOARD</p><h1>{dashboardTitle}</h1>{dashboardSubtitle && <p>{dashboardSubtitle}</p>}</div>{!plansFor && <div className="phase55-header-actions">{selectedGym && (selectedGym.role === 'owner' || selectedGym.role === 'admin') && <><button className="button outline" onClick={() => setRemoval({ client: null })}>Removed clients</button><button className="button outline" onClick={() => setAddingAthlete(true)}>+ Add athlete</button></>}</div>}</header>
       {settingsDialog}
-      {templateUnavailable && <p className="workspace-error" role="status">Workout templates are temporarily unavailable. Calendar editing remains available.</p>}
       {erasureNotice && erasureNotice.gym === gym && <p className="workspace-notice" role="status">{erasureNotice.text}</p>}
       {error && <p className="workspace-error" role="alert">{error}</p>}
       {plansFor ? <section className="phase55-plans" aria-label="Plans">
@@ -649,7 +629,7 @@ function Phase55Dashboard({ cycleExcelBetaReview, cycleGeneralV4Api, cycleGenera
         {!plans ? <p className="phase55-group-state" role="status">Loading programs…</p> : plans.items.length === 0 ? <p className="phase55-empty">{plansView === 'archived' ? 'No archived programs.' : 'No programs in this view.'}</p> : <div className="phase55-plan-list">{planDates.error && <p role="alert">Program dates could not be loaded. <button className="text-button" onClick={planDates.retry}>Retry dates</button></p>}{plans.items.map(plan => <article key={plan.assignment_id}><div><h2>{plan.program_name ?? 'Plan'}</h2><p>{plan.lifecycle_bucket.replaceAll('_', ' ')} · {plan.start_on ?? 'No start date'}{plan.end_on ? ` – ${plan.end_on}` : ''}</p>{planDates.items.find(item => item.program_id === plan.program_id) && <ProgramPublicationSummary item={planDates.items.find(item => item.program_id === plan.program_id)!} />}</div><div className="phase6-plan-actions">{plan.program_id && <button className="button outline" onClick={() => setViewingAssignment(plan.assignment_id)}>View details</button>}{'archive_eligible' in plan && plan.archive_eligible && <button className="button outline" onClick={() => setArchiveDialog({ action: plansView === 'archived' ? 'restore' : 'archive', plan })}>{plansView === 'archived' ? 'Restore' : 'Archive'}</button>}{'archive_blocker' in plan && plan.archive_blocker === 'current_program' && <small>End the current plan explicitly before archiving it. Saved workouts and history are retained.</small>}{'archive_blocker' in plan && plansView === 'archived' && plan.archive_blocker === 'restore_state_missing' && <small>Restore unavailable because this older archive has no recorded previous state.</small>}</div></article>)}</div>}
         {viewingAssignment && plans?.items.some(item => item.assignment_id === viewingAssignment) && <div className="phase55-plan-details"><button className="text-button" onClick={() => setViewingAssignment(null)}>Close details</button><ExistingPlanViewer api={api as Partial<Phase5CorrectionApi>} assignmentId={viewingAssignment} athleteName={plansAthleteName ?? undefined} /></div>}
         {plans?.has_more && <button className="button outline" onClick={() => void loadPlans(true)}>Load more plans</button>}
-      </section> : <div className="phase9-home-layout">{gym && <MaxReportInbox key={gym} api={api as Partial<BacklogRevisionApi>} gym={gym} refreshKey={reportRevision} onOpen={report => setProfileFor({ athleteId: report.athlete_id, athleteName: report.athlete_name, initialTab: 'maxes', reportId: report.report_id })} />}<section className="phase55-dashboard-body phase8-roster" aria-label="Client roster"><div className="phase8-roster-toolbar"><label className="phase55-search"><span>Search roster</span><input aria-label="Search client roster" placeholder="Search by client name" value={search.needs} onChange={event => { const value = event.target.value; setSearch({ needs: value, current: value }); scheduleGroup('needs_programming', value); scheduleGroup('current_clients', value) }} /></label><div className="phase8-roster-filters" role="group" aria-label="Filter roster">{([['all', 'All'], ['needs_programming', 'Needs program'], ['draft', 'Draft'], ['programmed', 'Programmed']] as const).map(([key, label]) => <button key={key} className={rosterFilter === key ? 'selected' : ''} aria-pressed={rosterFilter === key} onClick={() => setRosterFilter(key)}>{label}<span>{key === 'all' ? rosterClients.length : rosterClients.filter(entry => clientState(entry).key === key).length}</span></button>)}</div></div>{!needs || !current ? <p className="phase55-group-state" role="status">{dashboardSearchPending ? 'Searching clients…' : 'Loading clients…'}</p> : filteredRoster.length === 0 ? showWelcome ? <section className="owner-welcome"><h2>Your workspace is ready{coachDisplayName ? `, ${coachDisplayName}` : ''}.</h2><p>Add your first athlete to start managing their training.</p><div className="dialog-actions"><button className="button primary" onClick={() => setAddingAthlete(true)}>Add first athlete</button></div></section> : <p className="phase55-empty">No clients match this view.</p> : <div className="phase8-roster-list roster-table-wrap"><table className="roster-table"><thead><tr><th scope="col">Client</th><th scope="col">Current program</th><th scope="col">Cycle</th><th scope="col">Last workout</th><th scope="col">Status</th><th scope="col"><span className="roster-sr">Actions</span></th></tr></thead><tbody>{filteredRoster.map(entry => { const state = clientState(entry); const program = clientProgram(entry.item); const cycle = cycleProgress(entry.item.current_assignment?.start_on ?? null, entry.item.current_assignment?.end_on ?? null, (current?.server_as_of_date ?? needs?.server_as_of_date ?? null)); const last = lastWorkouts?.gym === gym ? lastWorkouts.items.get(entry.item.athlete_id) : undefined; return <tr key={entry.item.athlete_id} className="roster-table-row" onClick={event => { if (!(event.target as HTMLElement).closest('button, a, details, summary, input, select')) selectClient(entry.item) }}>
+      </section> : <div className="phase9-home-layout">{gym && <MaxReportInbox key={gym} api={api as Partial<BacklogRevisionApi>} gym={gym} refreshKey={reportRevision} onOpen={report => setProfileFor({ athleteId: report.athlete_id, athleteName: report.athlete_name, initialTab: 'maxes', reportId: report.report_id })} />}<section className="phase55-dashboard-body phase8-roster" aria-label="Client roster"><div className="phase8-roster-toolbar"><label className="phase55-search"><span>Search roster</span><input aria-label="Search client roster" placeholder="Search by client name" value={search.needs} onChange={event => { const value = event.target.value; setSearch({ needs: value, current: value }); scheduleGroup('needs_programming', value); scheduleGroup('current_clients', value) }} /></label><div className="phase8-roster-filters" role="group" aria-label="Filter roster">{([['all', 'All'], ['needs_programming', 'Needs program'], ['draft', 'Draft'], ['programmed', 'Programmed']] as const).map(([key, label]) => <button key={key} className={rosterFilter === key ? 'selected' : ''} aria-pressed={rosterFilter === key} onClick={() => setRosterFilter(key)}>{label}<span>{key === 'all' ? rosterClients.length : rosterClients.filter(entry => clientState(entry).key === key).length}</span></button>)}</div></div>{!needs || !current ? <p className="phase55-group-state" role="status">{dashboardSearchPending ? 'Searching clients…' : 'Loading clients…'}</p> : filteredRoster.length === 0 ? showWelcome ? <section className="owner-welcome"><h2>Your workspace is ready{coachDisplayName ? `, ${coachDisplayName}` : ''}.</h2><p>Add your first athlete to start managing their training.</p><div className="dialog-actions"><button className="button primary" onClick={() => setAddingAthlete(true)}>Add first athlete</button></div></section> : <p className="phase55-empty">No clients match this view.</p> : <div className="phase8-roster-list roster-table-wrap"><table className="roster-table"><thead><tr><th scope="col">Client</th><th scope="col">Current program</th><th scope="col">Cycle</th><th scope="col">Last workout</th><th scope="col">Status</th><th scope="col"><span className="roster-sr">Actions</span></th></tr></thead><tbody>{filteredRoster.map(entry => { const state = clientState(entry); const program = clientProgram(entry.item); const cycle = cycleProgress(entry.item.current_assignment?.start_on ?? null, entry.item.current_assignment?.end_on ?? null, today); const last = lastWorkouts?.gym === gym ? lastWorkouts.items.get(entry.item.athlete_id) : undefined; return <tr key={entry.item.athlete_id} className="roster-table-row" onClick={event => { if (!(event.target as HTMLElement).closest('button, a, details, summary, input, select')) selectClient(entry.item) }}>
               <th scope="row"><button className="phase8-roster-row" onClick={() => selectClient(entry.item)}><span className="phase55-avatar" aria-hidden="true">{initials(entry.item.roster_name)}</span><strong>{entry.item.roster_name}</strong></button></th>
               <td>{program ?? <span className="roster-muted">{state.key === 'needs_programming' ? 'No current program' : 'Program needs review'}</span>}</td>
               <td>{cycle ? <span className="roster-cycle"><span className="roster-bar" aria-hidden="true"><i style={{ width: `${Math.round(cycle.fraction * 100)}%` }} /></span>{cycle.label}</span> : <span className="roster-muted">—</span>}</td>
@@ -1589,7 +1569,7 @@ function V4PlanOverview({ weeks, calendar, readiness, onChooseWeek, onCopyWeek }
   </section>
 }
 
-function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecycleApi = null, workoutTemplateApi = null, programTemplateApi = null, onWorkoutTemplateUnavailable, activationExpectedCurrentAssignment = null, onSignOut, initialGym = null, initialAssignment = null, initialAthlete = null, initialAthleteName = null, clientFirst = false, backLabel = 'Back to clients', onBackToDashboard, onViewPlans, onCurrentAssignmentDrift, onAssignmentActivated, registerNavigationGuard }: { api: ConnectedCoachApiV4; correctionsApi: Phase5CorrectionApi | null; phase54Api: Phase5CorrectionApi | null; assignmentLifecycleApi?: Phase55AssignmentLifecycleApi | null; workoutTemplateApi?: Phase55WorkoutTemplateLibraryApi | null; programTemplateApi?: Phase9ProgramTemplateApi | null; onWorkoutTemplateUnavailable?(): void; activationExpectedCurrentAssignment?: string | null; onSignOut(): void; initialGym?: string | null; initialAssignment?: string | null; initialAthlete?: string | null; initialAthleteName?: string | null; clientFirst?: boolean; backLabel?: string; onBackToDashboard?(): void; onViewPlans?(): void; onCurrentAssignmentDrift?(): void; onAssignmentActivated?(assignment: string): void; registerNavigationGuard?(guard: (action: () => void) => void): void }) {
+function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecycleApi = null, workoutTemplateApi = null, onWorkoutTemplateUnavailable, activationExpectedCurrentAssignment = null, onSignOut, initialGym = null, initialAssignment = null, initialAthlete = null, initialAthleteName = null, clientFirst = false, backLabel = 'Back to clients', onBackToDashboard, onViewPlans, onCurrentAssignmentDrift, onAssignmentActivated, registerNavigationGuard }: { api: ConnectedCoachApiV4; correctionsApi: Phase5CorrectionApi | null; phase54Api: Phase5CorrectionApi | null; assignmentLifecycleApi?: Phase55AssignmentLifecycleApi | null; workoutTemplateApi?: Phase55WorkoutTemplateLibraryApi | null; onWorkoutTemplateUnavailable?(): void; activationExpectedCurrentAssignment?: string | null; onSignOut(): void; initialGym?: string | null; initialAssignment?: string | null; initialAthlete?: string | null; initialAthleteName?: string | null; clientFirst?: boolean; backLabel?: string; onBackToDashboard?(): void; onViewPlans?(): void; onCurrentAssignmentDrift?(): void; onAssignmentActivated?(assignment: string): void; registerNavigationGuard?(guard: (action: () => void) => void): void }) {
   const recoveryPrincipal = useContext(WorkoutRecoveryPrincipalContext)
   const recoveryEpoch = useContext(WorkoutRecoveryEpochContext)
   const workoutRecovery = useRef<WorkoutRecoveryController | null>(null)
@@ -1681,9 +1661,6 @@ function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecy
   const [publishScopeOpen, setPublishScopeOpen] = useState(false)
   const [publishScopeKind, setPublishScopeKind] = useState<'week' | 'program'>('program')
   const [publishWeekToken, setPublishWeekToken] = useState<string | null>(null)
-  const [saveAsTemplate, setSaveAsTemplate] = useState<{ name: string; requestId: string } | null>(null)
-  const [templateIssues, setTemplateIssues] = useState<CoachTemplateReadinessV1 | null>(null)
-  const [resumePublishAfterTemplate, setResumePublishAfterTemplate] = useState(false)
   const [templateFeatureUnavailable, setTemplateFeatureUnavailable] = useState(false)
   const usableWorkoutTemplateApi = templateFeatureUnavailable ? null : workoutTemplateApi
   const [dirty, setDirtyState] = useState(false)
@@ -2154,34 +2131,6 @@ function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecy
       setNotice(`${publishScopeKind === 'week' ? 'Week' : 'Program'} published. Earlier released work remains available to the client.`)
     })
   }
-  const saveCurrentAsTemplate = async () => {
-    const current = detailRef.current
-    if (!programTemplateApi || !current || !saveAsTemplate?.name.trim()) return
-    setTemplateIssues(null)
-    if (oct18Api.getCoachProgramTemplateReadinessV1) {
-      setBusy(true); setError(null)
-      try {
-        const readiness = await oct18Api.getCoachProgramTemplateReadinessV1({ program: current.program_id, assignment: current.assignment_id })
-        if (detailRef.current?.builder_version !== current.builder_version || detailRef.current?.assignment_id !== current.assignment_id) { setError('The program changed during review. Refresh and save the current program.'); return }
-        if (!readiness.ready) { setTemplateIssues(readiness); setError('Complete these workouts before saving a template. Your source programming is unchanged.'); return }
-      } catch (cause) { if (!(cause instanceof CoachApiError && cause.status === 404)) { setError(errorText(cause)); return } }
-      finally { setBusy(false) }
-    }
-    const input = { request_id: saveAsTemplate.requestId, program: current.program_id,
-      assignment: current.assignment_id, expected_builder_version: current.builder_version,
-      template_name: saveAsTemplate.name.trim() }
-    void performMutation('save template', () => programTemplateApi.saveCoachProgramAsTemplateV2(input), () => {
-      setSaveAsTemplate(null)
-      if (resumePublishAfterTemplate) setPublishScopeOpen(true)
-      setResumePublishAfterTemplate(false)
-      setNotice('Saved an independent copy in the program template library.')
-    })
-  }
-  const closeSaveAsTemplate = () => {
-    setSaveAsTemplate(null); setTemplateIssues(null)
-    if (resumePublishAfterTemplate) setPublishScopeOpen(true)
-    setResumePublishAfterTemplate(false)
-  }
   const undo = () => {
     const current = detailRef.current
     if (!current?.authoring.pending_undo) return
@@ -2638,14 +2587,14 @@ function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecy
     </aside>
     <section className="connected-main">
       <header className="connected-header"><div><p className="eyebrow">LIVE WORKSPACE</p><h1>{detail?.program_name ?? 'Select a program'}</h1>{detail && <p>{roster.find(item => item.athlete_id === detail.athlete_id)?.roster_name ?? 'Assigned athlete'} · {weeks.length} {weeks.length === 1 ? 'week' : 'weeks'} · Builder version {detail.builder_version}</p>}</div></header>
-      {error && !copy && !progression && !progressionV2 && !publishScopeOpen && !saveAsTemplate && <p className="workspace-error" role="alert">{error} {recovery && <button disabled={busy} onClick={recovery.retry}>{recovery.label}</button>}</p>}
+      {error && !copy && !progression && !progressionV2 && !publishScopeOpen && <p className="workspace-error" role="alert">{error} {recovery && <button disabled={busy} onClick={recovery.retry}>{recovery.label}</button>}</p>}
       {loadingNavigation && <p className="loading-inline" role="status">Loading navigation…</p>}
       {notice && <p className="phase4-live" role={notice === 'Workout template added to the calendar.' ? 'alert' : 'status'} aria-live={notice === 'Workout template added to the calendar.' ? 'assertive' : undefined}>{notice}{notice.startsWith('Undo complete.') && <button className="text-button" aria-label="Dismiss undo confirmation" onClick={() => setNotice(null)}>Dismiss</button>}</p>}
       {detail && <>
-        <div className="builder-toolbar"><span className="save-state">{dirty?'Unsaved changes':'Workout saved'}</span><button className="button primary" disabled={locked || (!scopedPublishAvailable && Boolean(publishDisabledReason))} title={!scopedPublishAvailable ? publishDisabledReason ?? undefined : undefined} onClick={() => guarded(scopedPublishAvailable ? openPublishScopes : publish)}>{clientFirst ? 'Publish program' : scopedPublishAvailable ? 'Review publish options' : detail.assignment_status === 'paused' && assignmentLifecycleApi ? 'Activate & publish' : 'Publish'}</button></div><details className="approved-tools"><summary>Program tools</summary>{clientFirst && selectedWeek && usableWorkoutTemplateApi && correctionsApi && <button className="button outline" disabled={locked || !focus || Boolean(richEditableDay && (richEditableDay.movement_groups.length || richEditableDay.ungrouped_exercises.length))} onClick={()=>guarded(()=>{ const slot=projectV4WeekSlots(selectedWeek, detail?.calendar).find(slot=>slot.day_ordinal===(focus?.ordinal??1));if(slot)setTemplatePicker({slot,week:selectedWeek}) })}>Add workout from template</button>}        <div className="builder-toolbar"><span className="save-state">{dirty ? 'Unsaved day edits — save or discard before another action.' : 'Day edits are saved.'}</span><span className={`readiness-state ${detail.authoring.readiness}`}>{detail.authoring.readiness === 'ready' ? 'Ready to publish whole program' : 'Draft — choose a ready day or week to publish'}</span><button className="button outline" disabled={locked} onClick={() => guarded(exportProgram)}>{busy ? 'Preparing Excel…' : 'Export Excel'}</button><button className="button outline" aria-label="Mark Ready" disabled={locked} onClick={() => guarded(markReady)}>Check readiness</button>{programTemplateApi && <button className="button outline" disabled={locked} onClick={() => guarded(() => { setError(null); setRecovery(null); setResumePublishAfterTemplate(false); setSaveAsTemplate({ name: detail.program_name, requestId: crypto.randomUUID() }) })}>Save to template library</button>}{!scopedPublishAvailable && publishDisabledReason && <span className="publish-disabled-reason" role="status">{publishDisabledReason}</span>}</div></details>
+        <div className="builder-toolbar"><span className="save-state">{dirty?'Unsaved changes':'Workout saved'}</span><button className="button primary" disabled={locked || (!scopedPublishAvailable && Boolean(publishDisabledReason))} title={!scopedPublishAvailable ? publishDisabledReason ?? undefined : undefined} onClick={() => guarded(scopedPublishAvailable ? openPublishScopes : publish)}>{clientFirst ? 'Publish program' : scopedPublishAvailable ? 'Review publish options' : detail.assignment_status === 'paused' && assignmentLifecycleApi ? 'Activate & publish' : 'Publish'}</button></div><details className="approved-tools"><summary>Program tools</summary>{clientFirst && selectedWeek && usableWorkoutTemplateApi && correctionsApi && <button className="button outline" disabled={locked || !focus || Boolean(richEditableDay && (richEditableDay.movement_groups.length || richEditableDay.ungrouped_exercises.length))} onClick={()=>guarded(()=>{ const slot=projectV4WeekSlots(selectedWeek, detail?.calendar).find(slot=>slot.day_ordinal===(focus?.ordinal??1));if(slot)setTemplatePicker({slot,week:selectedWeek}) })}>Add workout from template</button>}        <div className="builder-toolbar"><span className="save-state">{dirty ? 'Unsaved day edits — save or discard before another action.' : 'Day edits are saved.'}</span><span className={`readiness-state ${detail.authoring.readiness}`}>{detail.authoring.readiness === 'ready' ? 'Ready to publish whole program' : 'Draft — choose a ready day or week to publish'}</span><button className="button outline" disabled={locked} onClick={() => guarded(exportProgram)}>{busy ? 'Preparing Excel…' : 'Export Excel'}</button><button className="button outline" aria-label="Mark Ready" disabled={locked} onClick={() => guarded(markReady)}>Check readiness</button>{!scopedPublishAvailable && publishDisabledReason && <span className="publish-disabled-reason" role="status">{publishDisabledReason}</span>}</div></details>
         {detail.authoring.pending_undo && <UndoNotice expiresAt={detail.authoring.pending_undo.expires_at} description={detail.authoring.pending_undo.target_description} disabled={locked} onUndo={() => guarded(undo)} />}
         {compactUndo?.program === detail.program_id && <UndoNotice expiresAt={compactUndo.expires_at} description="Workout move" disabled={locked} onUndo={() => guarded(undoWorkoutMove)} />}
-        {clientFirst ? <>        <div className="approved-program-nav"><ManualTabList className="program-views" aria-label="Program view">{(['Day', 'Plan'] as const).map(view => <button key={view} role="tab" aria-selected={workspaceView === view} onClick={() => selectView(view)}>{view === 'Plan' ? 'Program overview' : 'Day'}</button>)}</ManualTabList><div><button className="button outline" disabled={locked} onClick={() => { const now = new Date(); const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`; const match = weeks.flatMap(week => projectV4WeekSlots(week, detail?.calendar).map(slot => ({week,slot}))).find(item => item.slot.planned_date === today); if (!match) { setNotice('Today is outside this program’s dates.'); return } if (workspaceView === 'Plan') selectWeek(match.week); else if (match.slot.day_identity_token) selectDay(match.slot,match.week); else guarded(() => authorCalendarDay(match.slot,match.week)) }}>This week</button>{oct18Api.previewBuilderWeekCopyV3 && oct18Api.applyBuilderWeekCopyV3 && <button className="button outline" disabled={locked || !selectedWeek || !previousWeek} onClick={() => guarded(() => { if (selectedWeek && previousWeek) updateCopy({ kind: 'week', sourceWeek: previousWeek.week_identity_token, sourceDay: null, destinations: [{ week_identity_token: selectedWeek.week_identity_token, collision_policy: 'preserve' }], preview: null, result: null }) })}>Copy all from previous week</button>}<label>Week <select aria-label="Focused week" disabled={locked} value={selectedWeek?.week_identity_token ?? ''} onChange={event => {const week=weeks.find(item=>item.week_identity_token===event.target.value);if(week)selectWeek(week)}}>{weeks.map(week=><option key={week.week_identity_token} value={week.week_identity_token}>Week {week.week_ordinal}</option>)}</select></label>{workspaceView === 'Day' && <button className="button primary" disabled={locked || !dirty || Boolean(richEditableDay && !editorCanSave)} onClick={() => void saveDraft.current?.()}>Save workout</button>}</div></div>
+        {clientFirst ? <>        <div className="approved-program-nav"><ManualTabList className="program-views" aria-label="Program view">{(['Day', 'Plan'] as const).map(view => <button key={view} role="tab" aria-selected={workspaceView === view} onClick={() => selectView(view)}>{view === 'Plan' ? 'Program overview' : 'Day'}</button>)}</ManualTabList><div><button className="button outline" disabled={locked} onClick={() => { const today = localToday(); const match = weeks.flatMap(week => projectV4WeekSlots(week, detail?.calendar).map(slot => ({week,slot}))).find(item => item.slot.planned_date === today); if (!match) { setNotice('Today is outside this program’s dates.'); return } if (workspaceView === 'Plan') selectWeek(match.week); else if (match.slot.day_identity_token) selectDay(match.slot,match.week); else guarded(() => authorCalendarDay(match.slot,match.week)) }}>This week</button>{oct18Api.previewBuilderWeekCopyV3 && oct18Api.applyBuilderWeekCopyV3 && <button className="button outline" disabled={locked || !selectedWeek || !previousWeek} onClick={() => guarded(() => { if (selectedWeek && previousWeek) updateCopy({ kind: 'week', sourceWeek: previousWeek.week_identity_token, sourceDay: null, destinations: [{ week_identity_token: selectedWeek.week_identity_token, collision_policy: 'preserve' }], preview: null, result: null }) })}>Copy all from previous week</button>}<label>Week <select aria-label="Focused week" disabled={locked} value={selectedWeek?.week_identity_token ?? ''} onChange={event => {const week=weeks.find(item=>item.week_identity_token===event.target.value);if(week)selectWeek(week)}}>{weeks.map(week=><option key={week.week_identity_token} value={week.week_identity_token}>Week {week.week_ordinal}</option>)}</select></label>{workspaceView === 'Day' && <button className="button primary" disabled={locked || !dirty || Boolean(richEditableDay && !editorCanSave)} onClick={() => void saveDraft.current?.()}>Save workout</button>}</div></div>
         {workspaceView === 'Plan' && <section className="approved-week-bands" aria-label="Program overview">{weeks.map(week=><article className={`approved-week-band${selectedWeek?.week_identity_token===week.week_identity_token?' selected':''}`} id={`approved-week-${week.week_identity_token}`} key={week.week_identity_token}><header><h3>Week {week.week_ordinal}</h3><span>{detail.calendar.version === 2 ? projectV4WeekSlots(week, detail.calendar)[0]?.planned_date : week.days[0]?.planned_date} – {detail.calendar.version === 2 ? projectV4WeekSlots(week, detail.calendar).at(-1)?.planned_date : week.days.at(-1)?.planned_date}</span></header><div>{projectV4WeekSlots(week, detail?.calendar).map(slot=><div className="approved-calendar-slot" data-week-token={week.week_identity_token} data-day-ordinal={slot.day_ordinal} key={slot.day_ordinal}><button disabled={locked || (!slot.day_identity_token && (slot.locked_any || !correctionsApi))} onClick={()=>slot.day_identity_token?selectDay(slot,week):guarded(()=>authorCalendarDay(slot,week))}><span>{slot.weekday.slice(0,3)} <time>{slot.planned_date?new Date(`${slot.planned_date}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</time></span><strong>{slot.workout_title ?? (slot.status==='workout'?workoutTitle(slot.label,slot.day_ordinal):'Recovery day')}</strong><small>{slot.status==='workout'?`${slot.exercise_count} exercises · ${slot.set_row_count} sets`:'No training assigned'}</small><small>{slot.locked_any ? slot.status==='workout' ? 'View workout →' : 'View day →' : slot.status==='workout' ? 'Open workout →' : '+ Add workout'}</small></button>{usableWorkoutTemplateApi && correctionsApi && (slot.status === 'unscheduled' || slot.status === 'authored_empty') && <button className="approved-calendar-template" aria-label={`Add workout from template for ${slot.weekday}`} disabled={locked || slot.locked_any} onClick={()=>guarded(()=>setTemplatePicker({slot,week}))}>Add from template</button>}</div>)}</div></article>)}</section>}
         {workspaceView === 'Day' && <>{selectedWeek && <><div className="approved-day-strip" role="group" aria-label="Week and day navigation"><button className="button outline" disabled={locked || selectedWeekIndex<=0} onClick={()=>previousWeek&&selectWeek(previousWeek)}>← Previous week</button><ManualTabList panelId="workout-day-panel" className="approved-day-tabs" aria-label="Days of the week">{projectV4WeekSlots(selectedWeek, detail?.calendar).map(slot=><button key={slot.day_ordinal} role="tab" disabled={locked || (!slot.day_identity_token && !correctionsApi)} aria-selected={slot.day_ordinal===focus?.ordinal} aria-current={slot.planned_date === localToday() ? 'date' : undefined} aria-label={`${slot.weekday.slice(0,3)} ${slot.planned_date ? new Date(`${slot.planned_date}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : ''}${detail.calendar.selected_weekdays.includes(slot.day_ordinal) ? ', Planned training day' : ''}`} onClick={()=>slot.day_identity_token?selectDay(slot,selectedWeek):guarded(()=>authorCalendarDay(slot,selectedWeek))}><strong>{slot.weekday.slice(0,3)}</strong><time>{slot.planned_date?new Date(`${slot.planned_date}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}</time>{(slot.exercise_count > 0 || detail.calendar.selected_weekdays.includes(slot.day_ordinal)) && <span className="approved-training-marker">{slot.exercise_count > 0 ? 'Programmed' : 'Training'}</span>}</button>)}</ManualTabList><button className="button outline" disabled={locked || selectedWeekIndex>=weeks.length-1} onClick={()=>weeks[selectedWeekIndex+1]&&selectWeek(weeks[selectedWeekIndex+1])}>Next week →</button></div><div className="approved-day-heading"><h2>{focus?weekdayForOrdinal(focus.ordinal):'Choose a day'} <small>{richEditableDay?.planned_date}</small></h2><div><button className="button outline" disabled={locked || !previousAuthoredDay} onClick={()=>previousAuthoredDay&&selectDay(previousAuthoredDay.slot,previousAuthoredDay.week)}>← Previous day</button><button className="button outline" disabled={locked || !nextAuthoredDay} onClick={()=>nextAuthoredDay&&selectDay(nextAuthoredDay.slot,nextAuthoredDay.week)}>Next day →</button></div></div></>}
         <div className="approved-authoring-grid"><div id="workout-day-panel" role="tabpanel" aria-label={focus ? weekdayForOrdinal(focus.ordinal) : 'Workout day'} className="phase4-focused-day" ref={focusedDayRegion} aria-busy={Boolean(focus && !focusedDay)} style={focus && !focusedDay ? { minHeight: focusedDayLoadingHeight.current } : undefined}>{focus?.week !== selectedWeek?.week_identity_token ? <p>Select an authored day to begin.</p> : richEditableDay && focus ? <ApprovedWorkoutEditor recovery={recoveryPrincipal && gym && athlete && focus ? { scope: { principal: recoveryPrincipal, gym, athlete, assignment: detail.assignment_id, program: detail.program_id, week: focus.week, day: focus.token }, revision: detail.builder_version, epoch: recoveryEpoch } : undefined} registerRecovery={registerWorkoutRecovery} onSaveReadinessChange={setEditorCanSave} buildPayload={(draft, original) => richDaySavePayload(draft, original, false)} historySuggestions={exerciseSuggestions} onHistoryQuery={setExerciseHistoryQuery} onCopyPrevious={copyPreviousDraft} copyPreviousDisabled={!previousWeek} key={`${detail.detail_read_token}:${focus.token}`} day={richEditableDay} template={false} percentBasisOptions={richPercentBasisOptions} exerciseOptions={richExerciseOptions} trackingSupported={richTrackingSupported} onSetExerciseTracking={compactApi.setCoachProgramExerciseTrackingV1 ? setGlobalTracking : undefined} onEnsureExercise={gym && ensureExerciseApi.ensureCoachExerciseV1 ? name => ensureExerciseApi.ensureCoachExerciseV1!({ target_gym: gym, exercise_name: name }) : undefined} defaultUnit={detail.default_unit} plateIncrement={detail.plate_increment} disabled={locked || !detail.phase4_editable || !richEditableDay.day_editable || richEditableDay.locked_any} onDirtyChange={setDirty} registerSave={callback => { saveDraft.current = callback }} onSave={draft => saveRichFocusedDraft(draft as RichProgramDaySave)} /> : editableDay && focus ? <DayEditor key={`${detail.detail_read_token}:${focus.token}`} day={editableDay} fixedWeekday weekdayLabel={'system_weekday' in editableDay ? editableDay.system_weekday : undefined} phase54={Boolean(phase54Api)} defaultUnit={detail.default_unit} disabled={locked || !detail.phase4_editable || editableDay.locked_any} refreshing={busy} saving={busy} discardVersion={0} exerciseSuggestions={correctionsApi ? exerciseSuggestions : undefined} onExerciseNameQuery={correctionsApi ? setExerciseHistoryQuery : undefined} onDirtyChange={setDirty} registerSave={callback => { saveDraft.current = callback }} onSave={saveFocusedDraft} /> : focusedDay?.mode === 'legacy_oversize' ? <LegacyOversizeDay day={focusedDay} /> : focus ? <p role="status">Loading focused day…</p> : <p>Select an authored day to begin.</p>}</div><aside className="approved-inspector"><p className="eyebrow">Program at a glance</p><h2>{detail.program_name}</h2><p>Week {selectedWeek?.week_ordinal} of {weeks.length}</p><dl><div><dt>Training days</dt><dd>{detail.calendar.selected_weekdays.length} / 7</dd></div><div><dt>Workout edits</dt><dd>{dirty?'Unsaved':'Saved'}</dd></div><div><dt>Units</dt><dd>{detail.default_unit}</dd></div></dl>{onViewPlans&&<button className="button outline" onClick={()=>guarded(onViewPlans)}>Program history →</button>}<ProgramPublicationDetails api={api as Partial<BacklogRevisionApi>} gym={gym ?? ''} athlete={detail.athlete_id} programIds={[detail.program_id]} refreshKey={detail.detail_read_token} /></aside></div></>}</> : <>        {workspaceView === 'Week' && <div className="phase4-actions"><button className="button outline" disabled={locked || !selectedWeek} onClick={() => guarded(() => { if (selectedWeek) updateCopy({ kind: 'week', sourceWeek: selectedWeek.week_identity_token, sourceDay: null, destinations: [], preview: null, result: null }) })}>Copy week</button>{previousWeek && selectedWeek && <button className="button outline" disabled={locked} onClick={() => guarded(() => updateCopy({ kind: 'week', sourceWeek: previousWeek.week_identity_token, sourceDay: null, destinations: [{ week_identity_token: selectedWeek.week_identity_token, collision_policy: 'preserve' }], preview: null, result: null }))}>Copy from last week</button>}</div>}
@@ -2671,8 +2620,7 @@ function ConnectedCoachAppV4({ api, correctionsApi, phase54Api, assignmentLifecy
       <label><input type="radio" name="publish-scope" checked={publishScopeKind === 'week'} disabled={!weeks.length || busy} onChange={() => setPublishScopeKind('week')} /><span><strong>Individual training week</strong><small>Choose one week to release its authored workouts and rest days.</small></span></label>
       {publishScopeKind === 'week' && <label className="phase9-publish-day">Week<select aria-label="Week to publish" disabled={busy} value={publishWeek ? publishWeekToken ?? '' : ''} onChange={event => setPublishWeekToken(event.target.value)}>{!publishWeek && <option value="" disabled>Choose a week</option>}{weeks.map(week => <option key={week.week_identity_token} value={week.week_identity_token}>Week {week.week_ordinal}</option>)}</select>{!publishWeek && <span role="alert">The selected week is no longer available. Choose a week before publishing.</span>}</label>}
       <label><input type="radio" name="publish-scope" checked={publishScopeKind === 'program'} disabled={busy} onChange={() => setPublishScopeKind('program')} /><span><strong>Full program</strong><small>Release all ready program content.</small></span></label>
-    </div><div className="phase9-publish-preview"><strong>Visibility preview</strong>{publishScopeKind === 'week' ? <ul>{publishWeek && projectV4WeekSlots(publishWeek, detail?.calendar).map(slot => <li key={slot.day_ordinal}>{slot.weekday}: {slot.status === 'unscheduled' ? 'Not assigned — not delivered' : slot.status === 'rest' ? 'Rest day' : slot.workout_title ?? workoutTitle(slot.label, slot.day_ordinal) ?? 'Workout'}</li>)}</ul> : <p>All {weeks.length} weeks. The server will preserve previously released work and check remaining content.</p>}<p>The server checks readiness and release history before publishing. Publishing makes this content available to the athlete; it does not confirm their device has downloaded it.</p></div><div className="dialog-actions">{programTemplateApi && <button className="button outline" disabled={busy} onClick={() => { setError(null); setRecovery(null); setPublishScopeOpen(false); setResumePublishAfterTemplate(true); setSaveAsTemplate({ name: detail.program_name, requestId: crypto.randomUUID() }) }}>Save to template library</button>}<button className="button outline" disabled={busy} onClick={() => setPublishScopeOpen(false)}>Cancel</button><button className="button primary" disabled={busy || publishScopeKind === 'week' && !publishWeek} onClick={publishSelectedScope}>{busy ? 'Publishing…' : detail.assignment_status === 'paused' ? 'Activate and publish' : 'Publish selection'}</button></div></Modal>}
-    {saveAsTemplate && <Modal label="Save program to template library" busy={busy} onClose={closeSaveAsTemplate}><h2>Save to template library</h2>{templateIssues && <section aria-label="Workouts that need repair"><ul>{templateIssues.issues.map(issue => <li key={issue.day_identity_token}><button className="text-button" disabled={busy} onClick={() => { setSaveAsTemplate(null); setTemplateIssues(null); setResumePublishAfterTemplate(false); setPublishScopeOpen(false); setWorkspaceView('Day'); chooseDay({ week: issue.week_identity_token, token: issue.day_identity_token, ordinal: issue.day_ordinal }) }}>Week {issue.week_ordinal} · {weekdayForOrdinal(issue.day_ordinal)}{issue.label ? ` · ${issue.label}` : ''} — Open workout</button></li>)}</ul>{!templateIssues.issues.length && <p>Review the source workouts and complete their prescriptions before retrying.</p>}</section>}<p>This creates an independent copy without client dates, max values, or workout history.</p>{error && <p className="workspace-error" role="alert">{error}</p>}{recovery && <RecoveryNotice recovery={recovery} busy={busy} />}<label className="phase9-save-template-name">Template name<input maxLength={120} value={saveAsTemplate.name} disabled={busy} onChange={event => { setError(null); setRecovery(null); setSaveAsTemplate(current => current ? { name: event.target.value, requestId: crypto.randomUUID() } : null) }} /></label><div className="dialog-actions"><button className="button outline" disabled={busy} onClick={closeSaveAsTemplate}>Cancel</button><button className="button primary" disabled={busy || !saveAsTemplate.name.trim()} onClick={saveCurrentAsTemplate}>{busy ? 'Saving…' : 'Save copy'}</button></div></Modal>}
+    </div><div className="phase9-publish-preview"><strong>Visibility preview</strong>{publishScopeKind === 'week' ? <ul>{publishWeek && projectV4WeekSlots(publishWeek, detail?.calendar).map(slot => <li key={slot.day_ordinal}>{slot.weekday}: {slot.status === 'unscheduled' ? 'Not assigned — not delivered' : slot.status === 'rest' ? 'Rest day' : slot.workout_title ?? workoutTitle(slot.label, slot.day_ordinal) ?? 'Workout'}</li>)}</ul> : <p>All {weeks.length} weeks. The server will preserve previously released work and check remaining content.</p>}<p>The server checks readiness and release history before publishing. Publishing makes this content available to the athlete; it does not confirm their device has downloaded it.</p></div><div className="dialog-actions"><button className="button outline" disabled={busy} onClick={() => setPublishScopeOpen(false)}>Cancel</button><button className="button primary" disabled={busy || publishScopeKind === 'week' && !publishWeek} onClick={publishSelectedScope}>{busy ? 'Publishing…' : detail.assignment_status === 'paused' ? 'Activate and publish' : 'Publish selection'}</button></div></Modal>}
     {guard && <DirtyGuard busy={busy || guardPending} onSave={() => void finishGuard('save')} onDiscard={() => void finishGuard('discard')} onCancel={cancelGuard} />}
   </main>
 }
