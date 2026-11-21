@@ -38,6 +38,7 @@ export type CoachCycleRunningState = { contract: 'coach-cycle-running-state/1'; 
   contract: 'coach-cycle-running-state/1'; linked: true; draft_id: string; draft_revision: number; published_draft_revision: number
   assignment_id: string; program_id: string; program_name: string; start_on: string
   done: CoachCycleRunningDone[]; opened: { week: number; weekday: number; opened_at: string }[]; checked_at: string
+  progress?: { weeks: number; weeks_done: number; workouts: number; workouts_done: number; workouts_left: number }
 }
 export type CoachCycleRunningUpdateResult = {
   contract: 'coach-cycle-running-update/1'; status: 'updated' | 'no_changes'; request_id: string; draft_id: string; draft_revision: number
@@ -137,9 +138,16 @@ export function isCoachExcelNextCycleCancelResult(v: unknown, input: CoachExcelN
   return exact(v, ['contract','status','queue_id','queue_version']) && v.contract === 'coach-excel-cancel/3' && v.status === 'cancelled'
     && v.queue_id === input.queue_id && v.queue_version === input.expected_queue_version
 }
+function runningProgress(v: unknown): boolean {
+  return exact(v, ['weeks','weeks_done','workouts','workouts_done','workouts_left'])
+    && integer(v.weeks, 0) && integer(v.weeks_done, 0) && v.weeks_done <= v.weeks
+    && integer(v.workouts, 0) && integer(v.workouts_done, 0) && integer(v.workouts_left, 0)
+    && v.workouts_done + v.workouts_left === v.workouts
+}
 export function isCoachCycleRunningState(v: unknown, input: CoachCycleRunningStateInput): v is CoachCycleRunningState {
   if (exact(v, ['contract','linked','draft_id']) && v.linked === false) return v.contract === 'coach-cycle-running-state/1' && v.draft_id === input.draft
-  if (!exact(v, ['contract','linked','draft_id','draft_revision','published_draft_revision','assignment_id','program_id','program_name','start_on','done','opened','checked_at'])
+  const keys = ['contract','linked','draft_id','draft_revision','published_draft_revision','assignment_id','program_id','program_name','start_on','done','opened','checked_at']
+  if (!(exact(v, keys) || (exact(v, [...keys, 'progress']) && runningProgress(v.progress)))
     || v.contract !== 'coach-cycle-running-state/1' || v.linked !== true || !uuid(v.draft_id) || (input.draft !== null && v.draft_id !== input.draft)
     || !integer(v.draft_revision, 1) || !integer(v.published_draft_revision, 1) || ![v.assignment_id,v.program_id].every(uuid)
     || !text(v.program_name, 200) || !date(v.start_on) || !timestamp(v.checked_at) || !Array.isArray(v.done) || !Array.isArray(v.opened)) return false

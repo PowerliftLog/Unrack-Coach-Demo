@@ -1109,7 +1109,9 @@ function DraftWorkspace({ excelBetaReview, api, excelPublishApi, excelPreviewApi
       onPublishReady={readOnly ? undefined : running && running.draft_id === opened.id
         ? runningApi ? () => void publishRunning() : undefined
         : nextCycle ? () => { setPublished(''); setPublishRequest(value => value + 1) } : undefined} publishBusy={publishBusy || runningBusy} layout={twoScreen ? 'two-screen' : 'workspace'}
-      toolbarRef={twoScreen ? sheet : undefined} onToolbarState={twoScreen ? setToolbarState : undefined} readOnly={readOnly} completedWorkouts={opened.completed} exerciseByWeek={EXERCISE_BY_WEEK} />}
+      toolbarRef={twoScreen ? sheet : undefined} onToolbarState={twoScreen ? setToolbarState : undefined} readOnly={readOnly}
+      shapeLocked={twoScreen && runningSelected ? 'This program is running, so its weeks and training days stay as sent. Start a new cycle to change them.' : undefined}
+      completedWorkouts={opened.completed} exerciseByWeek={EXERCISE_BY_WEEK} />}
     {conversion && <CoachConvertPercentDialog {...conversion} onClose={() => setConversion(null)}
       apply={changes => { conversion.apply(changes); setConversion(null) }} />}
     {/* One render site for the publish panel, outside the editor's key, so opening or saving a draft never remounts an in-flight publish.

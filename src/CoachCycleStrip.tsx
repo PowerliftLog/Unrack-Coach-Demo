@@ -49,6 +49,7 @@ const dateLabel = (value?: string | null) => value ? shortDate(value) : ''
 type Running = Extract<CoachCycleRunningState, { linked: true }>
 
 export function runningCycleProgress(running: Running, draft?: CycleDraft, assignmentEnd?: string | null, priorDraft?: CycleDraft) {
+  const server = running.progress
   const matchesPublished = (candidate?: CycleDraft) => candidate?.draft_id === running.draft_id
     && candidate.revision === running.published_draft_revision
   const draftMatches = matchesPublished(draft)
@@ -58,7 +59,10 @@ export function runningCycleProgress(running: Running, draft?: CycleDraft, assig
   const end = assignmentEnd ?? cycleEnd({ start, weeks: intake?.weeks ?? 0 })
   const weeks = end ? Math.ceil((Date.parse(end) - Date.parse(start) + 86_400_000) / 604_800_000) : 0
   const days = intake?.days?.length ?? 0
-  if (!weeks || !days) return { end, weeks, weeksDone: null, remainingWeeks: null, workoutsLeft: null }
+  if (!weeks || !days) return { end, weeks: server?.weeks ?? weeks,
+    weeksDone: server ? server.weeks_done : null, remainingWeeks: null,
+    workoutsLeft: server ? server.workouts_left : null,
+    finished: !!server && server.weeks > 0 && server.weeks_done === server.weeks }
 
   const doneByWeek = new Map<number, number>()
   for (const row of running.done) {
@@ -74,15 +78,17 @@ export function runningCycleProgress(running: Running, draft?: CycleDraft, assig
     if (left) remainingWeeks.push(week)
     if (draftMatches) workoutsLeft += left
   }
-  return { end, weeks, remainingWeeks, weeksDone: draftMatches ? weeks - remainingWeeks.length : null,
-    workoutsLeft: draftMatches ? workoutsLeft : null }
+  return { end, weeks: server?.weeks ?? weeks,
+    weeksDone: server ? server.weeks_done : draftMatches ? weeks - remainingWeeks.length : null,
+    remainingWeeks, workoutsLeft: server ? server.workouts_left : draftMatches ? workoutsLeft : null,
+    finished: server ? server.weeks > 0 && server.weeks_done === server.weeks : weeks > 0 && remainingWeeks.length === 0 }
 }
 
 const loggedDateFormatters = new Map<string | undefined, Intl.DateTimeFormat>()
 
 // Start = earliest completed workout, else earliest in-progress workout, else planned start; finish = latest completed or skipped workout once every week is done; logged timestamps intentionally use the coach's browser time zone (Joe, 2026-11-20).
 export function runningCycleDates(running: Running, progress: ReturnType<typeof runningCycleProgress>, today: string, timeZone?: string) {
-  const finished = progress.weeks > 0 && progress.remainingWeeks?.length === 0
+  const finished = progress.finished
   let firstCompleted = Infinity
   let firstInProgress = Infinity
   let lastDone = -Infinity

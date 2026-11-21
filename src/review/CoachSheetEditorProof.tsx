@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Workbook, type WorkbookInstance } from '@fortune-sheet/react'
 import type { Cell, Sheet, Hooks } from '@fortune-sheet/core'
 import { CoachCycleInterpretationPanel } from '../CoachCycleInterpretationPanel'
+import { ModalDialog } from '../ModalDialog'
 import { interpretCoachSheetDraft, type CoachGeneratedSheetInterpretation } from '../lib/coach-sheet-interpret-generated'
 import { compileCoachCycleDestination, compileCoachCycleDestinationV2, compileCoachCycleSchedule, compileCoachCycleScheduleV2, type CoachCycleDestinationIssue, type CoachCycleDestinationScheduleV2 } from '../lib/coach-cycle-destination'
 import { COACH_CYCLE_PUBLISH_LIMITS } from '../lib/coach-cycle-limits'
@@ -9,22 +10,17 @@ import { prescriptionAdvice } from '../lib/coach-prescription-advice'
 import { maxTypeLabel, percentConversionLabel, percentExerciseKey, percentLoads, rewritePercentPrescription, type PercentMax, type PercentMaxResolver } from '../lib/coach-percent-resolution'
 import type { PercentCell, PercentConversionRequest } from '../CoachConvertPercentDialog'
 import '@fortune-sheet/react/dist/index.css'
+import {
+  cell, editableCell, generate, initialBlockIds, initialCounts, nameStarts, resolveBlockIds, runFills, sheetMatrix,
+  startsOf, validStructure, weekdays, type BlockIds, type CoachSheetDraft, type Intake, type NameStarts, type Switches,
+} from '../lib/coach-sheet-layout'
+import { addDay, addDayBlocked, addWeek, addWeekBlocked, dayHasContent, removeDay, removeWeek, sourceWeeks, weekHasContent, type WeekOperation } from '../lib/coach-sheet-structure'
 import './coach-sheet-editor-proof.css'
 
-export type Intake = { client: string; name: string; weeks: number; days: string[]; start: string; unit: 'lb' | 'kg' }
-export type BlockIds = Record<string, string[]>
-/** Weeks (2+) where an exercise block switches to a different exercise, keyed by block ID. */
-export type Switches = Record<string, number[]>
-export type CoachSheetDraft = { format: 'unrack-generated-cycle-v1'; intake: Intake; counts: Record<string, number>; sheets: Sheet[]; blockIds?: BlockIds; switches?: Switches }
-/** Per day, per block position: the weeks (1-based) where the block's exercise name starts. */
-export type NameStarts = Record<string, number[][]>
-export function nameStarts(intake: Intake, blockIds: BlockIds, switches?: Switches): NameStarts {
-  return Object.fromEntries(intake.days.map(day => [day, (blockIds[day] || []).map(id =>
-    [1, ...[...new Set(switches?.[id] ?? [])].filter(week => Number.isInteger(week) && week > 1 && week <= intake.weeks).sort((a, b) => a - b)])]))
-}
-const startsOf = (starts: NameStarts | undefined, day: string, block: number) => starts?.[day]?.[block] ?? [1]
+export { editableCell, generate, nameStarts, runFills, validStructure } from '../lib/coach-sheet-layout'
+export type { BlockIds, CoachSheetDraft, Intake, NameStarts, Switches } from '../lib/coach-sheet-layout'
+
 const key = 'unrack-coach-sheet-editor-proof-v6'
-const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 function todayLocal(): string {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -36,7 +32,6 @@ function nextMondayLocal(): string {
   return dateKey(date)
 }
 const sample: Intake = { client: '', name: 'New training cycle', weeks: 4, days: ['Monday', 'Wednesday', 'Friday', 'Saturday'], start: todayLocal(), unit: 'lb' }
-const starterExercises = 5
 
 function localDate(value: string): Date {
   const [year, month, day] = value.split('-').map(Number)
@@ -47,112 +42,20 @@ function dateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function StartDatePicker({ value, onChange }: { value: string; onChange(value: string): void }) {
+function StartDatePicker({ value, onChange, disabled }: { value: string; onChange(value: string): void; disabled?: boolean }) {
   const [open, setOpen] = useState(false)
   const [month, setMonth] = useState(() => { const selected = localDate(value || todayLocal()); return new Date(selected.getFullYear(), selected.getMonth(), 1) })
   const firstDay = month.getDay()
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
   const selected = localDate(value || todayLocal())
   return <div className="cse-date-picker">
-    <button type="button" className="cse-date-trigger" aria-label="Start date" aria-expanded={open} onClick={() => { const date = localDate(value || todayLocal()); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); setOpen(!open) }}>{selected.toLocaleDateString()} <span aria-hidden="true">▦</span></button>
-    {open && <div className="cse-calendar" role="dialog" aria-label="Choose start date">
+    <button type="button" className="cse-date-trigger" aria-label="Start date" disabled={disabled} aria-expanded={open && !disabled} onClick={() => { const date = localDate(value || todayLocal()); setMonth(new Date(date.getFullYear(), date.getMonth(), 1)); setOpen(!open) }}>{selected.toLocaleDateString()} <span aria-hidden="true">▦</span></button>
+    {open && !disabled && <div className="cse-calendar" role="dialog" aria-label="Choose start date">
       <div className="cse-calendar-head"><button type="button" aria-label="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button><strong>{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong><button type="button" aria-label="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button></div>
       <div className="cse-calendar-grid">{['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => <span key={day} className="cse-calendar-weekday">{day}</span>)}{Array.from({ length: firstDay }, (_, index) => <span key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const date = new Date(month.getFullYear(), month.getMonth(), index + 1); const key = dateKey(date); return <button type="button" key={key} className={key === value ? 'selected' : ''} aria-label={date.toDateString()} aria-pressed={key === value} onClick={() => { onChange(key); setOpen(false) }}>{index + 1}</button> })}</div>
       <button type="button" className="cse-calendar-today" onClick={() => { const now = todayLocal(); onChange(now); setOpen(false) }}>Today</button>
     </div>}
   </div>
-}
-
-function cell(value: string, background?: string, wrap = true): Cell {
-  return { v: value, m: value, bg: background, tb: wrap ? '2' : '1', ct: { fa: '@', t: 's' } }
-}
-
-function sheetMatrix(sheet?: Sheet): (Cell | null)[][] {
-  if (!sheet) return []
-  if (sheet.data) return sheet.data
-  const matrix: (Cell | null)[][] = Array.from({ length: sheet.row || 0 }, () => Array.from({ length: sheet.column || 0 }, () => null))
-  sheet.celldata?.forEach(({ r, c, v }) => { if (matrix[r]) matrix[r][c] = v })
-  return matrix
-}
-
-function initialCounts(intake: Intake): Record<string, number> {
-  return Object.fromEntries(intake.days.map(day => [day, starterExercises]))
-}
-
-export function editableCell(intake: Intake, counts: Record<string, number>, row: number, column: number, starts?: NameStarts): boolean {
-  const day = intake.days[Math.floor(column / 5)]
-  const position = (row - 1) % (intake.weeks + 1), block = Math.floor((row - 1) / (intake.weeks + 1))
-  return row > 0 && column >= 0 && !!day && block < counts[day] && position > 0
-    && (column % 5 === 2 || column % 5 === 3 || (column % 5 === 1 && startsOf(starts, day, block).includes(position)))
-}
-function initialBlockIds(intake: Intake, counts: Record<string, number>): BlockIds {
-  return Object.fromEntries(intake.days.map(day => [day, Array.from({ length: counts[day] }, () => crypto.randomUUID())]))
-}
-const nameFill = '#f0f5f2', switchFill = '#fbf1d9'
-/** The fill each run's first name cell should have: amber only where the exercise actually changes
- * from the run before it. Same name in every week (after "Change exercise by week") stays plain;
- * amber there read as a yellow flag (Joe, Nov 18). */
-export function runFills(intake: Intake, counts: Record<string, number>, starts: NameStarts | undefined, matrix: (Cell | null)[][]): [row: number, column: number, fill: string, span: number][] {
-  const fills: [number, number, string, number][] = []
-  for (const [dayIndex, day] of intake.days.entries()) for (let block = 0; block < (counts[day] || 0); block++) {
-    const column = dayIndex * 5 + 1, first = 1 + block * (intake.weeks + 1)
-    const name = (start: number) => String(matrix[first + start]?.[column]?.v ?? '').trim()
-    startsOf(starts, day, block).forEach((start, index, runs) => fills.push([first + start, column,
-      index > 0 && name(start) !== name(runs[index - 1]) ? switchFill : nameFill, (runs[index + 1] ?? intake.weeks + 1) - start]))
-  }
-  return fills
-}
-export function generate(intake: Intake, counts: Record<string, number>, previous?: Sheet, rowMap?: Record<string, number[]>, starts?: NameStarts): Sheet[] {
-  const columns = intake.days.length * 5 - 1
-  const blockHeight = intake.weeks + 1
-  const rows = 1 + Math.max(...intake.days.map(day => counts[day] || starterExercises)) * blockHeight
-  const data: (Cell | null)[][] = Array.from({ length: rows }, () => Array.from({ length: columns }, () => null))
-  const old = sheetMatrix(previous)
-  const widths: Record<string, number> = {}
-  const heights: Record<string, number> = {}
-  const merges: Record<string, { r: number; c: number; rs: number; cs: number }> = {}
-  for (let day = 0; day < intake.days.length; day++) {
-    const base = day * 5
-    for (let column = 0; column < 4; column++) data[0][base + column] = cell(column === 1 ? intake.days[day].toUpperCase() : '', '#b8d0c8', false)
-    widths[String(base)] = 92
-    widths[String(base + 1)] = 250
-    widths[String(base + 2)] = 350
-    widths[String(base + 3)] = 430
-    if (day < intake.days.length - 1) {
-      widths[String(base + 4)] = 22
-      for (let row = 0; row < rows; row++) data[row][base + 4] = cell('', '#829d93')
-    }
-    for (let exercise = 0; exercise < counts[intake.days[day]]; exercise++) {
-      const labels = 1 + exercise * blockHeight
-      ;['WEEK', 'EXERCISE', 'PRESCRIPTION', 'COACH INSTRUCTIONS'].forEach((label, column) => { data[labels][base + column] = cell(label, '#d6e5df', false) })
-      heights[String(labels)] = 32
-      // The name column merges over each run of weeks that share an exercise (one run unless switched).
-      const runs = startsOf(starts, intake.days[day], exercise)
-      const runOf = (week: number) => runs.filter(start => start <= week + 1).at(-1)!
-      for (const [index, start] of runs.entries()) {
-        const span = (runs[index + 1] ?? intake.weeks + 1) - start
-        if (span > 1) merges[`${labels + start}_${base + 1}`] = { r: labels + start, c: base + 1, rs: span, cs: 1 }
-      }
-      for (let week = 0; week < intake.weeks; week++) {
-        const row = labels + week + 1
-        // A newly added block maps to -1: it has no old rows (never copy the header row's styles into it).
-        const oldIndex = rowMap ? rowMap[intake.days[day]]?.[exercise] ?? -1 : exercise
-        const oldRow = !rowMap ? row : oldIndex < 0 ? -1 : 2 + oldIndex * blockHeight + week
-        data[row][base] = cell(`W${week + 1}`, '#edf3f0')
-        const runStart = labels + runOf(week), merge = merges[`${runStart}_${base + 1}`]
-        data[row][base + 1] = { ...cell('', nameFill), ...(merge ? { mc: row === runStart ? merge : { r: runStart, c: base + 1 } } : {}) }
-        data[row][base + 2] = cell('')
-        data[row][base + 3] = cell('')
-        if (row === runStart && old[oldRow]?.[base + 1]?.v) data[row][base + 1] = { ...old[oldRow][base + 1]!, bg: data[row][base + 1]!.bg, mc: data[row][base + 1]!.mc }
-        for (const column of [base + 2, base + 3]) {
-          if (old[oldRow]?.[column]) data[row][column] = { ...old[oldRow][column]!, mc: undefined }
-        }
-        heights[String(row)] = 44
-      }
-    }
-  }
-  for (const [row, column, fill, span] of runFills(intake, counts, starts, data)) for (let at = row; at < row + span; at++) data[at][column] = { ...data[at][column]!, bg: fill }
-  return [{ id: 'cycle', name: intake.name || 'Training cycle', celldata: data.flatMap((line, r) => line.flatMap((value, c) => value ? [{ r, c, v: value }] : [])), row: rows, column: columns, zoomRatio: previous?.zoomRatio || 0.9, defaultRowHeight: 44, config: { columnlen: widths, rowlen: heights, merge: merges } }]
 }
 
 // Display-only layer. Everything below changes how the grid looks, never the saved source:
@@ -410,35 +313,6 @@ function FlagMaxForm({ unit, onSave, onClose }: { unit: Intake['unit']; onSave(v
   </form>
 }
 
-function canonicalValue(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(',')}]`
-  if (value && typeof value === 'object') return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalValue(item)}`).join(',')}}`
-  return JSON.stringify(value) ?? 'undefined'
-}
-
-// Bulk engine operations may bypass cell hooks: reject their whole snapshot rather
-// than repair content after a raw row operation has shifted its source coordinates.
-export function validStructure(intake: Intake, counts: Record<string, number>, sheets: Sheet[], starts?: NameStarts): boolean {
-  if (!intake || !Array.isArray(intake.days) || intake.days.length < 1 || intake.days.length > 7
-    || new Set(intake.days).size !== intake.days.length || intake.days.some(day => !weekdays.includes(day))
-    || !Number.isInteger(intake.weeks) || intake.weeks < 1 || intake.weeks > 16
-    || !counts || intake.days.some(day => !Number.isInteger(counts[day]) || counts[day] < 1 || counts[day] > 20)) return false
-  const expected = generate(intake, counts, undefined, undefined, starts)[0]
-  const actual = sheets[0]
-  if (sheets.length !== 1 || !actual || actual.id !== expected.id || actual.name !== expected.name
-    || actual.row !== expected.row || actual.column !== expected.column) return false
-  const matrix = sheetMatrix(actual), template = sheetMatrix(expected)
-  const merges = (sheet: Sheet) => canonicalValue(sheet.config?.merge || {})
-  if (merges(actual) !== merges(expected)) return false
-  for (let row = 0; row < Math.max(matrix.length, template.length); row++) {
-    for (let column = 0; column < Math.max(matrix[row]?.length || 0, template[row]?.length || 0); column++) {
-      const value = matrix[row]?.[column], reference = template[row]?.[column]
-      if (!editableCell(intake, counts, row, column, starts) && (String(value?.v ?? '') !== String(reference?.v ?? '') || value?.f)) return false
-      if (canonicalValue(value?.mc) !== canonicalValue(reference?.mc)) return false
-    }
-  }
-  return true
-}
 function cloneSheets(sheets: Sheet[]): Sheet[] { return structuredClone(sheets) }
 function readDraft(): CoachSheetDraft | null {
   try {
@@ -477,6 +351,7 @@ export type CoachSheetEditorProps = {
   toolbarRef?: Ref<CoachSheetActions>
   onToolbarState?: (state: CoachSheetToolbarState | null) => void
   readOnly?: boolean
+  shapeLocked?: string
   onBuildDraft?: (draft: CoachSheetDraft) => void
   intakeDisabled?: boolean
 }
@@ -508,7 +383,14 @@ export type CoachSheetToolbarState = {
   publishBlocked: boolean
 }
 
-export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, percentMaxes, onConvertPercent, onSaveMax, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false, toolbarRef, onToolbarState, readOnly: locked = false, onBuildDraft, intakeDisabled = false }: CoachSheetEditorProps = {}) {
+type StructureSnapshot = {
+  draft: CoachSheetDraft
+  intake: Intake
+  skipped: Record<string, string>
+}
+type StructureRemoval = { week: number } | { day: string }
+
+export default function CoachSheetEditorProof({ initialDraft, cycleId, initialClientId, onDraftChange, onSaveDraft, clientOptions, localPersistence = true, serverClean, onPublishReady, exerciseReference, percentMaxes, onConvertPercent, onSaveMax, layout = 'classic', publishBusy = false, completedWorkouts, exerciseByWeek = false, toolbarRef, onToolbarState, readOnly: locked = false, shapeLocked, onBuildDraft, intakeDisabled = false }: CoachSheetEditorProps = {}) {
   const twoScreen = layout === 'two-screen'
   const workspace = layout !== 'classic'
   const readOnly = twoScreen && locked
@@ -521,13 +403,14 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   const [counts, setCounts] = useState<Record<string, number>>(previous.current?.counts || initialCounts(sample))
   const [sheets, setSheets] = useState<Sheet[] | null>(previous.current?.sheets || null)
   const liveCycleName = twoScreen && Boolean(sheets)
-  const [blockIds, setBlockIds] = useState<BlockIds>(() => {
-    const saved = previous.current?.blockIds
-    const shape = previous.current?.intake || sample, sizes = previous.current?.counts || initialCounts(sample)
-    return saved && shape.days.every(day => Array.isArray(saved[day]) && saved[day].length === sizes[day]
-      && saved[day].every(id => typeof id === 'string' && id.length > 0) && new Set(saved[day]).size === sizes[day])
-      ? saved : initialBlockIds(shape, sizes)
-  })
+  const editSettings = liveCycleName && !onBuildDraft
+  const showStructure = liveCycleName && !readOnly
+  const structureLocked = Boolean(shapeLocked)
+  const dayReason = showStructure && !structureLocked ? addDayBlocked({ intake: activeIntake }) : null
+  const canAddDay = showStructure && !structureLocked && !dayReason
+  const [blockIds, setBlockIds] = useState<BlockIds>(() => resolveBlockIds(
+    previous.current?.intake || sample, previous.current?.counts || initialCounts(sample), previous.current?.blockIds,
+  ))
   const [switches, setSwitches] = useState<Switches>(() => previous.current?.switches ?? {})
   const [percentBasis, setPercentBasis] = useState(() => new Map<string, string>())
   const starts = useMemo(() => nameStarts(activeIntake, blockIds, switches), [activeIntake, blockIds, switches])
@@ -573,6 +456,32 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   }, [settingsOpen, focusCycleName])
   // Unskip restores the prescription that was in place before Skip, keyed by block id and week.
   const skippedPrescriptions = useRef<Record<string, string>>({})
+  const [structureHistory, setStructureHistory] = useState<(StructureSnapshot & { action: string })[]>([])
+  const [removal, setRemoval] = useState<StructureRemoval | null>(null)
+  const [addDayOpen, setAddDayOpen] = useState(false)
+  const addDayControl = useRef<HTMLDivElement>(null)
+  const addDayTrigger = useRef<HTMLButtonElement>(null)
+  const removalTitle = useId()
+  const removalBody = useId()
+  useEffect(() => {
+    if (!addDayOpen || !canAddDay) return
+    const dismissOutside = (event: MouseEvent) => {
+      if (!addDayControl.current?.contains(event.target as Node)) setAddDayOpen(false)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setAddDayOpen(false)
+      addDayTrigger.current?.focus()
+    }
+    document.addEventListener('click', dismissOutside)
+    document.addEventListener('keydown', dismissOnEscape, true)
+    return () => {
+      document.removeEventListener('click', dismissOutside)
+      document.removeEventListener('keydown', dismissOnEscape, true)
+    }
+  }, [addDayOpen, canAddDay])
   const [revision, setRevision] = useState(0)
   const [sourceRevision, setSourceRevision] = useState(0)
   const [dirty, setDirty] = useState(false)
@@ -816,8 +725,25 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
   }
 
   function closeSettings() {
-    commitCycleName(true)
+    if (editSettings) setIntake(activeIntake)
+    else commitCycleName(true)
     setSettingsOpen(false)
+  }
+
+  function saveSettings() {
+    if (readOnly || intakeDisabled) return
+    const name = intake.name.trim() || activeIntake.name
+    const nextIntake = {
+      ...activeIntake, name,
+      start: structureLocked ? activeIntake.start : intake.start,
+      unit: structureLocked ? activeIntake.unit : intake.unit,
+    }
+    const next = cloneSheets(current.current)
+    if (name !== activeIntake.name) next[0].name = name
+    setIntake(nextIntake)
+    setActiveIntake(nextIntake)
+    setSettingsOpen(false)
+    replaceSheet(next, 'Cycle settings saved.')
   }
 
   function start() {
@@ -833,6 +759,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     setDestinationIssues([])
     const newCounts = initialCounts(buildIntake)
     const next = generate(buildIntake, newCounts)
+    clearStructureHistory()
     current.current = cloneSheets(next)
     setSheets(next)
     setCounts(newCounts)
@@ -846,7 +773,11 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     setMessage('Blank worksheet created. Select a cell and type or paste.')
   }
 
-  function replaceSheet(next: Sheet[], status: string, focus?: CellPosition) {
+  function clearStructureHistory() {
+    setStructureHistory(history => history.length ? [] : history)
+  }
+
+  function applySheet(next: Sheet[], status: string, focus?: CellPosition) {
     if (focus) pendingView.current = focus
     else keepView()
     setReview(null)
@@ -856,6 +787,119 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     setRevision(value => value + 1)
     setDirty(true)
     setMessage(status)
+  }
+
+  function replaceSheet(next: Sheet[], status: string, { focus }: { focus?: CellPosition } = {}) {
+    applySheet(next, status, focus)
+    clearStructureHistory()
+  }
+
+  function structureDraft(): CoachSheetDraft {
+    return { format: 'unrack-generated-cycle-v1', intake: activeIntake, counts, blockIds, switches, sheets: current.current }
+  }
+
+  function restoreStructure({ draft, intake, skipped }: StructureSnapshot, status: string) {
+    setIntake(intake)
+    setActiveIntake(draft.intake)
+    setCounts(draft.counts)
+    setBlockIds(draft.blockIds!)
+    setSwitches(draft.switches ?? {})
+    skippedPrescriptions.current = skipped
+    setSelection(null)
+    setActiveCell(null)
+    lastCell.current = null
+    setMaxSetupCell(null)
+    setCardOpen(false)
+    applySheet(draft.sheets, status)
+  }
+
+  function applyStructure(next: CoachSheetDraft, action: string, status: string, weekOperation?: WeekOperation) {
+    const { sheets, ...draft } = structureDraft()
+    const before = {
+      draft: { ...structuredClone(draft), sheets },
+      intake: structuredClone(intake),
+      skipped: { ...skippedPrescriptions.current },
+      action,
+    }
+    setStructureHistory(history => [...history.slice(-19), before])
+    const { days, weeks } = next.intake
+    const skipped: Record<string, string> = {}
+    const weekSources = sourceWeeks(activeIntake.weeks, weekOperation)
+    // Unskip follows the same source weeks as the worksheet. Its keys are 0-based.
+    for (const id of Object.values(next.blockIds!).flat()) for (const [week, sourceWeek] of weekSources.entries()) {
+      const prescription = skippedPrescriptions.current[`${id}:${sourceWeek - 1}`]
+      if (prescription !== undefined) skipped[`${id}:${week}`] = prescription
+    }
+    restoreStructure({ draft: next, intake: { ...intake, days, weeks }, skipped }, status)
+  }
+
+  function requestRemoval(target: StructureRemoval) {
+    const draft = structureDraft()
+    if ('week' in target ? weekHasContent(draft, target.week) : dayHasContent(draft, target.day)) setRemoval(target)
+    else confirmRemoval(target)
+  }
+
+  function confirmRemoval(target: StructureRemoval) {
+    setRemoval(null)
+    if (structureLocked || !showStructure) return
+    const draft = structureDraft()
+    if ('week' in target) {
+      const { week } = target
+      applyStructure(removeWeek(draft, week), `remove week ${week}`, `Week ${week} removed.`, { remove: week })
+    } else {
+      const { day } = target
+      applyStructure(removeDay(draft, day), `remove ${day}`, `${day} removed.`)
+    }
+  }
+
+  function structureBar() {
+    const { weeks, days } = activeIntake
+    const weekReason = structureLocked ? null : addWeekBlocked({ intake: activeIntake })
+    const last = structureHistory.at(-1)
+    const removeLabel = removal && ('week' in removal ? `Remove week ${removal.week}` : `Remove ${removal.day}`)
+    return <div className="cse-structure">
+      <div className="cse-structure-group" role="group" aria-label="Weeks">
+        <button type="button" disabled={structureLocked || Boolean(weekReason)} title={weekReason ?? shapeLocked} onClick={() => {
+          applyStructure(addWeek(structureDraft()), `add week ${weeks + 1}`, `Week ${weeks + 1} added. It copies week ${weeks}.`, 'add')
+        }}>+ Add week (copies W{weeks})</button>
+        {weekReason && <span className="cse-structure-reason">{weekReason}</span>}
+        {Array.from({ length: weeks }, (_, index) => index + 1).map(week => <span className="cse-structure-item" key={week}>
+          W{week}<button type="button" disabled={structureLocked || weeks === 1} aria-label={`Remove week ${week}`} onClick={() => requestRemoval({ week })}>×</button>
+        </span>)}
+        {last && <button type="button" disabled={structureLocked} aria-label={`Undo ${last.action}`} onClick={() => {
+          setStructureHistory(history => history.slice(0, -1))
+          restoreStructure(last, `Undid ${last.action}.`)
+        }}>Undo</button>}
+      </div>
+      <div className="cse-structure-group cse-structure-days" role="group" aria-label="Training days">
+        {days.map(day => <span className="cse-structure-item" key={day}>
+          {day.slice(0, 3)}<button type="button" disabled={structureLocked || days.length === 1} aria-label={`Remove ${day}`} onClick={() => requestRemoval({ day })}>×</button>
+        </span>)}
+        <div className="cse-add-day" ref={addDayControl}>
+          <button type="button" ref={addDayTrigger} disabled={!canAddDay} title={dayReason ?? shapeLocked}
+            aria-expanded={addDayOpen && canAddDay} onClick={() => setAddDayOpen(open => !open)}>+ Add day</button>
+          {addDayOpen && canAddDay && <div className="cse-day-popover" role="group" aria-label="Unused weekdays">
+            {weekdays.filter(day => !days.includes(day)).map(day => <button type="button" key={day} onClick={() => {
+              setAddDayOpen(false)
+              addDayTrigger.current?.focus()
+              applyStructure(addDay(structureDraft(), day), `add ${day}`, `${day} added.`)
+            }}>{day}</button>)}
+          </div>}
+        </div>
+        {dayReason && <span className="cse-structure-reason">{dayReason}</span>}
+      </div>
+      {shapeLocked && <p className="cse-structure-reason cse-structure-lock">{shapeLocked}</p>}
+      {removal && removeLabel && !structureLocked && <ModalDialog className="dialog ccb-confirm" box
+        labelledBy={removalTitle} describedBy={removalBody} initialFocus="[data-cancel-removal]"
+        onEscape={() => setRemoval(null)} onBackdropClick={() => setRemoval(null)}>
+        <h2 id={removalTitle}>{removeLabel}?</h2>
+        <p id={removalBody}>Its exercises, prescriptions and notes {'week' in removal ? 'on every day' : 'in every week'} go too. You can undo this.</p>
+        <div className="dialog-actions">
+          <button type="button" className="button outline" data-cancel-removal onClick={() => setRemoval(null)}>Cancel</button>
+          <button type="button" className="button danger" onClick={() => confirmRemoval(removal)}>{removeLabel}</button>
+        </div>
+      </ModalDialog>}
+    </div>
   }
   function changeBlock(day: string, block: number, action: 'add' | 'remove' | 'up' | 'down') {
     const ids = blockIds[day]
@@ -883,7 +927,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     const target = action === 'add' ? index + 1 : action === 'up' ? index - 1 : action === 'down' ? index + 1 : Math.min(index, nextIds.length - 1)
     const focus = action === 'add' ? { row: blockRow(day, target, 0), column: activeIntake.days.indexOf(day) * 5 + 1 } : undefined
     setSelection({ day, block: target, week: focus ? 0 : selection?.week ?? 0 })
-    replaceSheet(next, `${day} exercise ${action === 'add' ? 'added' : action === 'remove' ? 'removed' : 'moved'}. All week entries stay with their exercise.`, focus)
+    replaceSheet(next, `${day} exercise ${action === 'add' ? 'added' : action === 'remove' ? 'removed' : 'moved'}. All week entries stay with their exercise.`, { focus })
   }
   function blockRow(day: string, block: number, week: number) { return 2 + block * (activeIntake.weeks + 1) + week }
   function blockName(day: string, block: number) {
@@ -983,7 +1027,13 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       if (!painted.current.has(`${row}:${column}`)) try { workbook.current?.setCellFormat(row, column, 'bg', fill) } catch { /* Paint never blocks editing. */ }
     }
     current.current = cloneSheets(next)
-    queueMicrotask(() => { setDirty(true); setReview(null); setDestinationIssues([]); setSourceRevision(value => value + 1) })
+    queueMicrotask(() => {
+      clearStructureHistory()
+      setDirty(true)
+      setReview(null)
+      setDestinationIssues([])
+      setSourceRevision(value => value + 1)
+    })
     queueMicrotask(() => growRows(next[0]))
   }, [activeIntake, counts, starts, doneWeeks, blockIds, switches, readOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1321,10 +1371,34 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
     </div>
   </> : focusFlag ? <FlagExplanation flag={focusFlag} onGo={() => goToCell(focusFlag.row, focusFlag.column)} /> : <span className="cse-hint">Prescriptions: sets x reps @ load or RPE, e.g. 3x8 @ 225, 3x8 @ 7, 3x12 each @ 5 lb, 1x8+ or AMRAP. @ 10 or less is RPE; add lb or kg for a light weight. SKIP leaves a week out. Red = can't read, yellow = empty or unclear. Click an exercise name for past weights.{check.flags.length > 0 && ' Select a red or yellow cell to see why.'}</span>
   const Page = twoScreen && onBuildDraft ? 'div' : 'main'
+  const grid = sheets && <div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} {...(readOnly ? { allowEdit: false } : {})} showFormulaBar={false} addRows={0} cellContextMenu={readOnly ? ['copy'] : ['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>
   return <Page className={workspace ? 'cse-page cse-page-workspace' : 'cse-page'}>
     {!workspace && <header className="cse-top"><span>UNRACK <b>COACH</b></span><span>{localPersistence ? 'LOCAL REVIEW · EMBEDDED SPREADSHEET PROOF' : 'TRAINING CYCLE BUILDER'}</span></header>}
     {twoScreen && sheets && !readOnly && <div className="ccb-hint">{hint}</div>}
-    {showIntake && <section inert={twoScreen && intakeDisabled} className="cse-intake" aria-label={workspace && sheets ? 'Cycle settings' : undefined}>
+    {showIntake && (editSettings ? <section inert={intakeDisabled} className="cse-intake cse-cycle-settings" aria-label="Cycle settings">
+      <form onSubmit={event => { event.preventDefault(); saveSettings() }}>
+        <p>Cycle settings (name, start date, unit). Saving never clears the sheet.</p>
+        <div className="cse-fields">
+          <label>Cycle name<input ref={cycleNameInput} value={intake.name}
+            onChange={event => { const name = event.target.value; setIntake(staged => ({ ...staged, name })) }}
+            onBlur={event => {
+              // The builder toolbar saves the live name when focus leaves settings.
+              if (!event.currentTarget.form?.contains(event.relatedTarget)) commitCycleName()
+            }}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              saveSettings()
+            }}/></label>
+          <div className="cse-field"><span>Start date</span><StartDatePicker value={intake.start} disabled={structureLocked}
+            onChange={start => setIntake(staged => ({ ...staged, start }))}/></div>
+          <label>Unit<select value={intake.unit} disabled={structureLocked}
+            onChange={event => { const unit = event.target.value as Intake['unit']; setIntake(staged => ({ ...staged, unit })) }}><option value="lb">lb</option><option value="kg">kg</option></select></label>
+          <button className="cse-primary" disabled={intakeDisabled} type="submit">Save</button>
+        </div>
+        {shapeLocked && <p className="cse-settings-lock">Start date and unit stay as sent on a running program.</p>}
+      </form>
+    </section> : <section inert={twoScreen && intakeDisabled} className="cse-intake" aria-label={workspace && sheets ? 'Cycle settings' : undefined}>
       {!(twoScreen && onBuildDraft) && (workspace && sheets ? <div><p className="cse-kicker">CYCLE SETTINGS</p><h1>Change the cycle shape</h1><p>Rebuilding replaces this sheet with a blank one in the new shape. Save first if you want to keep this version.</p></div>
       : <div><p className="cse-kicker">NEW TRAINING CYCLE</p><h1>Build in a spreadsheet</h1><p>{localPersistence ? 'Choose the cycle shape, then program directly in the cells. This local proof does not publish to athletes.' : 'Choose the cycle shape, program directly in the cells, and review every prescription before publishing.'}</p></div>)}
       <div className="cse-fields">
@@ -1345,7 +1419,7 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
       <button className="cse-primary" disabled={twoScreen && intakeDisabled || !intake.days.length || intake.days.length * intake.weeks > COACH_CYCLE_PUBLISH_LIMITS.authoredDays || Boolean(clientOptions && !intake.client)} onClick={start}>{workspace && sheets ? 'Rebuild sheet with these settings' : 'Create new template'}</button>
       {intake.days.length * intake.weeks > COACH_CYCLE_PUBLISH_LIMITS.authoredDays && <p role="alert">Choose at most {COACH_CYCLE_PUBLISH_LIMITS.authoredDays} total workout days across the cycle. Reduce the weeks or selected weekdays.</p>}
       {sheets && !workspace && <p className="cse-caution">Intake changes above apply when you create another new template. That replaces this sheet; save your work first.</p>}
-    </section>}
+    </section>)}
     {sheets && <section className="cse-workspace">
       {!twoScreen && <div className="cse-workspace-head">{workspace
         ? <div className="cse-workspace-meta"><button className="cse-settings-toggle" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}>Cycle settings</button><span>{activeIntake.weeks} {activeIntake.weeks === 1 ? 'week' : 'weeks'} · {activeIntake.days.map(day => day.slice(0, 3)).join(', ')} · {activeIntake.unit}</span>{activeIntake.days.length > 1 && <span className="cse-day-jump" role="group" aria-label="Go to day">Go to {activeIntake.days.map((day, index) => <button key={day} onClick={() => jumpToDay(index)}>{day.slice(0, 3)}</button>)}</span>}{hint}</div>
@@ -1365,7 +1439,11 @@ export default function CoachSheetEditorProof({ initialDraft, cycleId, initialCl
         'Draft saved to Coach storage.', 'Draft saved in this browser. Reload to check it reopens.',
       ].includes(message) && <p className="ccd-toolbar-notice" ref={statusRef} role="status">{message}</p>}
       {twoScreen && !readOnly && !check.hasPrescriptions && <p className="cse-examples cse-empty-examples">{prescriptionExamples}</p>}
-      <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}><div className="cse-grid" ref={gridRef} aria-label="Coach spreadsheet editor" onKeyDownCapture={workspace ? () => setCardOpen(false) : undefined}><Workbook key={revision} ref={workbook} data={editorSheets} defaultFontSize={16} showSheetTabs={false} showToolbar={false} {...(readOnly ? { allowEdit: false } : {})} showFormulaBar={false} addRows={0} cellContextMenu={readOnly ? ['copy'] : ['copy', 'paste']} headerContextMenu={[]} sheetTabContextMenu={[]} hooks={editorHooks} onChange={acceptChange}/></div>{exercisePanel()}</div>
+      <div className="cse-split" style={workspace && gridHeight ? { height: gridHeight, minHeight: 0 } : undefined}>
+        {grid}
+        {exercisePanel()}
+      </div>
+      {showStructure && structureBar()}
       {!twoScreen && !readOnly && <div className="cse-status" ref={statusRef}><span>{unsaved ? 'Unsaved changes' : 'Saved draft'}</span><span role="status">{message}</span></div>}
     </section>}
     {review && localPersistence && reviewSchedule && <section className="cycle-review" aria-label="Cycle calendar review">

@@ -65,10 +65,19 @@ function matrix(sheet: Sheet): (Cell | null)[][] {
   }
   return result
 }
+// Read rich text as its literal segment text. Refuse formulas and conflicting cached values.
 function raw(cell: Cell | null | undefined): string {
-  // Formula results and rich text are not interchangeable with literal source.
-  // Reject them instead of taking a cached display value into a reusable cycle.
-  if (cell?.f || cell?.ct?.t === 'inlineStr' || (cell?.v != null && typeof cell.v !== 'string')) invalid()
+  if (cell?.f || (cell?.v != null && typeof cell.v !== 'string')) invalid()
+  if (cell?.ct?.t === 'inlineStr') {
+    const segments: unknown = cell.ct.s
+    if (Object.hasOwn(cell, 'f') || !Array.isArray(segments)) return invalid()
+    const text = segments.map((segment: unknown) => {
+      if (!object(segment) || typeof segment.v !== 'string') return invalid()
+      return segment.v
+    }).join('')
+    if (cell.v != null && cell.v !== text) invalid()
+    return text.replace(/\r\n?/g, '\n')
+  }
   return cell?.v == null ? '' : String(cell.v)
 }
 
